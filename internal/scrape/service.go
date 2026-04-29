@@ -26,21 +26,24 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 	var html string
 	var renderErr error
 
-	renderErr = Retry(ctx, 3, func() error {
-		if s.Browser != nil {
-			h, err := s.Browser.Render(ctx, sourceURL, site)
-			if err == nil {
-				html = h
-				return nil
+	if s.Browser != nil {
+		h, err := s.Browser.Render(ctx, sourceURL, site)
+		if err == nil {
+			html = h
+		} else {
+			renderErr = err
+		}
+	}
+	if html == "" {
+		renderErr = Retry(ctx, 3, func() error {
+			h, err := s.Fetcher.Fetch(ctx, sourceURL)
+			if err != nil {
+				return err
 			}
-		}
-		h, err := s.Fetcher.Fetch(ctx, sourceURL)
-		if err != nil {
-			return err
-		}
-		html = h
-		return nil
-	})
+			html = h
+			return nil
+		})
+	}
 
 	if renderErr != nil {
 		return RunResult{Errors: []model.StructuredError{{Code: "SCRAPE_RENDER_FAILED", Message: renderErr.Error()}}}
@@ -69,6 +72,16 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 	wg := sync.WaitGroup{}
 	mu := sync.Mutex{}
 	for idx := range allItems {
+		if allItems[idx].URL == "" {
+			continue
+		}
+		if len(site.DetailPage.ImageSelectors) == 0 && site.DetailPage.VINSelector == "" {
+			break
+		}
+		// Skip expensive detail-page fetch when we already have useful media and no VIN is requested.
+		if site.DetailPage.VINSelector == "" && (allItems[idx].PrimaryImage != "" || len(allItems[idx].Images) > 0) {
+			continue
+		}
 		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int) {
@@ -102,22 +115,32 @@ func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site confi
 	var html string
 	var fetchErr error
 
-	fetchErr = Retry(ctx, 3, func() error {
-		if uf, ok := s.Fetcher.(unsafeFetcher); ok {
-			h, err := uf.FetchUnsafe(ctx, sourceURL)
+	if s.Browser != nil {
+		h, err := s.Browser.Render(ctx, sourceURL, site)
+		if err == nil {
+			html = h
+		}
+	}
+	if html != "" {
+		fetchErr = nil
+	} else {
+		fetchErr = Retry(ctx, 3, func() error {
+			if uf, ok := s.Fetcher.(unsafeFetcher); ok {
+				h, err := uf.FetchUnsafe(ctx, sourceURL)
+				if err != nil {
+					return err
+				}
+				html = h
+				return nil
+			}
+			h, err := s.Fetcher.Fetch(ctx, sourceURL)
 			if err != nil {
 				return err
 			}
 			html = h
 			return nil
-		}
-		h, err := s.Fetcher.Fetch(ctx, sourceURL)
-		if err != nil {
-			return err
-		}
-		html = h
-		return nil
-	})
+		})
+	}
 	if fetchErr != nil {
 		return RunResult{Errors: []model.StructuredError{{Code: "SCRAPE_RENDER_FAILED", Message: fetchErr.Error()}}}
 	}
