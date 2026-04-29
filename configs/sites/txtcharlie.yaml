@@ -1,0 +1,31 @@
+name: txtcharlie
+baseUrl: https://www.txtcharlie.com
+listPage:
+  waitSelectors:
+    - ".vehicle-card"
+    - ".inventory-item"
+  cardSelector: ".vehicle-card, .inventory-item, [class*='vehicle']"
+  titleSelector: "h2, h3, .vehicle-title, [class*='title']"
+  urlSelector: "a[href*='inventory'], a[href*='vehicle-details'], a"
+  stockSelector: ".stock, [class*='stock'], [data-stock]"
+  priceSelector: ".price, [class*='price']"
+  mileageSelector: ".mileage, [class*='mileage']"
+  imageSelector: "img"
+  pagination:
+    type: "next"
+    nextSelector: "a[rel='next'], .next a"
+    maxPages: 5
+    infiniteScroll: false
+    scrollMaxAttempts: 8
+detailPage:
+  imageSelectors:
+    - ".gallery img"
+    - "img[data-src]"
+    - "img[src*='vehicle']"
+  vinSelector: ".vin, [class*='vin']"
+regex:
+  stock:
+    - "(?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)"
+    - "(?i)data-stock=['\"]([a-z0-9\\-]+)['\"]"
+  vin:
+    - "\\b([A-HJ-NPR-Z0-9]{17})\\b"
