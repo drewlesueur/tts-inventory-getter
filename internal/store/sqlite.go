@@ -1,0 +1,182 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
+	_ "modernc.org/sqlite"
+)
+
+type SQLiteResultStore struct{ db *sql.DB }
+
+func NewSQLiteResultStore(dsn string) (*SQLiteResultStore, error) {
+	dir := filepath.Dir(dsn)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	s := &SQLiteResultStore{db: db}
+	if err := s.init(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *SQLiteResultStore) Close() error { return s.db.Close() }
+
+func (s *SQLiteResultStore) init() error {
+	q := `
+CREATE TABLE IF NOT EXISTS scrape_results (
+  result_id TEXT PRIMARY KEY,
+  dealership_id TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  total_items INTEGER NOT NULL DEFAULT 0,
+  success_items INTEGER NOT NULL DEFAULT 0,
+  failed_items INTEGER NOT NULL DEFAULT 0,
+  failure_reason TEXT,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  idempotency_key TEXT,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  errors_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scrape_results_idempotency ON scrape_results(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+`
+	_, err := s.db.Exec(q)
+	return err
+}
+
+func (s *SQLiteResultStore) UpsertResult(ctx context.Context, result model.ScrapeResult) error {
+	items, err := json.Marshal(result.Items)
+	if err != nil {
+		return err
+	}
+	errs, err := json.Marshal(result.Errors)
+	if err != nil {
+		return err
+	}
+	const q = `
+INSERT INTO scrape_results (
+  result_id, dealership_id, source_url, status, started_at, finished_at,
+  total_items, success_items, failed_items, failure_reason, error_count,
+  idempotency_key, items_json, errors_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(result_id) DO UPDATE SET
+  dealership_id=excluded.dealership_id,
+  source_url=excluded.source_url,
+  status=excluded.status,
+  started_at=excluded.started_at,
+  finished_at=excluded.finished_at,
+  total_items=excluded.total_items,
+  success_items=excluded.success_items,
+  failed_items=excluded.failed_items,
+  failure_reason=excluded.failure_reason,
+  error_count=excluded.error_count,
+  idempotency_key=excluded.idempotency_key,
+  items_json=excluded.items_json,
+  errors_json=excluded.errors_json
+`
+	finishedAt := ""
+	if !result.FinishedAt.IsZero() {
+		finishedAt = result.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	_, err = s.db.ExecContext(ctx, q,
+		result.ResultID,
+		result.DealershipID,
+		result.SourceURL,
+		string(result.Status),
+		result.StartedAt.UTC().Format(time.RFC3339Nano),
+		finishedAt,
+		result.TotalItems,
+		result.SuccessItems,
+		result.FailedItems,
+		result.FailureReason,
+		result.ErrorCount,
+		result.IdempotencyKey,
+		string(items),
+		string(errs),
+	)
+	return err
+}
+
+func (s *SQLiteResultStore) GetResult(ctx context.Context, resultID string) (model.ScrapeResult, error) {
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
+	return s.scanOne(ctx, q, resultID)
+}
+
+func (s *SQLiteResultStore) ClearIdempotency(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scrape_results SET idempotency_key = '' WHERE idempotency_key IS NOT NULL AND idempotency_key != ''`)
+	return err
+}
+
+func (s *SQLiteResultStore) ClearResults(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM scrape_results`)
+	return err
+}
+
+func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (model.ScrapeResult, error) {
+	if key == "" {
+		return model.ScrapeResult{}, ErrNotFound
+	}
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
+	return s.scanOne(ctx, q, key)
+}
+
+func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) (model.ScrapeResult, error) {
+	var out model.ScrapeResult
+	var status string
+	var startedAt, finishedAt string
+	var itemsJSON, errorsJSON string
+	err := s.db.QueryRowContext(ctx, query, arg).Scan(
+		&out.ResultID,
+		&out.DealershipID,
+		&out.SourceURL,
+		&status,
+		&startedAt,
+		&finishedAt,
+		&out.TotalItems,
+		&out.SuccessItems,
+		&out.FailedItems,
+		&out.FailureReason,
+		&out.ErrorCount,
+		&out.IdempotencyKey,
+		&itemsJSON,
+		&errorsJSON,
+	)
+	if err == sql.ErrNoRows {
+		return model.ScrapeResult{}, ErrNotFound
+	}
+	if err != nil {
+		return model.ScrapeResult{}, err
+	}
+	out.Status = model.RunStatus(status)
+	if out.StartedAt, err = time.Parse(time.RFC3339Nano, startedAt); err != nil {
+		return model.ScrapeResult{}, fmt.Errorf("invalid started_at: %w", err)
+	}
+	if finishedAt != "" {
+		if out.FinishedAt, err = time.Parse(time.RFC3339Nano, finishedAt); err != nil {
+			return model.ScrapeResult{}, fmt.Errorf("invalid finished_at: %w", err)
+		}
+	}
+	if err := json.Unmarshal([]byte(itemsJSON), &out.Items); err != nil {
+		return model.ScrapeResult{}, err
+	}
+	if err := json.Unmarshal([]byte(errorsJSON), &out.Errors); err != nil {
+		return model.ScrapeResult{}, err
+	}
+	return out, nil
+}

@@ -3,8 +3,8 @@ package scrape
 import (
 	"context"
 
-	"github.com/example/inventory-scraper/internal/config"
-	"github.com/example/inventory-scraper/internal/model"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 type Options struct {

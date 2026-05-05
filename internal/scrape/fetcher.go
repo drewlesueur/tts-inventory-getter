@@ -17,8 +17,9 @@ type HTTPFetcher struct {
 }
 
 func NewHTTPFetcher() *HTTPFetcher {
+	const requestTimeout = 12 * time.Second
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: requestTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if err := rejectUnsafeURL(req.URL); err != nil {
 				return err
@@ -30,7 +31,7 @@ func NewHTTPFetcher() *HTTPFetcher {
 		},
 	}
 	unsafeClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: requestTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after too many redirects")

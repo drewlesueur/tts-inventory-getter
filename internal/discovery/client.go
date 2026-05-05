@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/inventory-scraper/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
 type Client struct {

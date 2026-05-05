@@ -3,13 +3,17 @@ package scrape
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
-	"github.com/example/inventory-scraper/internal/model"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 var multiSpace = regexp.MustCompile(`\s+`)
 var yearTitle = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+var imageSizeHintRe = regexp.MustCompile(`-(\d+)x(\d+)\.(?:jpg|jpeg|png|webp)(?:[?#]|$)`)
+
+const minImageDimension = 300
 
 func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem {
 	item.Title = clean(item.Title)
@@ -84,6 +88,13 @@ func isLikelyVehicleImageURL(raw string) bool {
 	u := strings.ToLower(raw)
 	if strings.HasPrefix(u, "data:image/") {
 		return false
+	}
+	if m := imageSizeHintRe.FindStringSubmatch(u); len(m) == 3 {
+		w, _ := strconv.Atoi(m[1])
+		h, _ := strconv.Atoi(m[2])
+		if (w > 0 && w < minImageDimension) || (h > 0 && h < minImageDimension) {
+			return false
+		}
 	}
 	noise := []string{
 		"/logo", "logo_", "seal", "icon-", "icon_", "favicon", "sprite", "placeholder",

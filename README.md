@@ -4,21 +4,22 @@ Production-oriented scraper service for dealership inventory extraction.
 
 ## Stack
 - Go 1.22+
-- Gin HTTP API
+- net/http API
 - `chromedp` rendering with HTTP fallback parser
-- MongoDB for run logs only
+- SQLite for run result persistence
 - Dockerized for Linux
 
 ## Architecture
-- `cmd/server/main.go`: service bootstrap and graceful shutdown
+- `cmd/server/main.go`: service bootstrap, graceful shutdown, daily scrape cron
 - `internal/api`: HTTP handlers/middleware
 - `internal/scrape`: browser render, parsing strategies, normalization, detail image fetch, retry, dedupe
 - `internal/discovery`: Codex/OpenAI-driven selector discovery
-- `internal/config`: env + site config loader
-- `internal/store`: Mongo run summary persistence
+- `internal/inventoryapi`: client for upstream inventory API (URL list + image updates)
+- `internal/config`: env + site config loader (with in-memory cache for discovered configs)
+- `internal/store`: SQLite scrape result persistence
 - `internal/auth`: API key and optional HMAC middleware
 - `internal/metrics`: Prometheus metrics
-- `configs/sites/txtcharlie.yaml`: default dealer config
+- `configs/sites/*.yaml`: per-dealership scrape configs
 
 ## API
 ### `POST /v1/scrape/once`
@@ -32,8 +33,11 @@ Request:
 }
 ```
 
-### `GET /v1/runs/:runId`
-Returns persisted run status/summary from Mongo.
+### `GET /v1/results/:resultId`
+Returns persisted scrape result (status, items, errors) from SQLite.
+
+### `DELETE /v1/results`
+Clears every row in the `scrape_results` table. Requires `X-Service-Key`.
 
 ### `GET /healthz`
 Liveness.
@@ -83,15 +87,36 @@ All API errors return:
 - Request body size limit
 - Per-IP rate limiting
 
+## Scheduled Scrape Flow
+Three independent crons, each toggled by its own `ENABLE_*` flag:
+
+**1. Image refresh** (`ENABLE_IMAGE_UPDATE_CRON`, `IMAGE_UPDATE_CRON_SPEC`, default every 2 hours)
+1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` → expects `{ "data": [{accountID, dealershipId, url}, ...] }`.
+2. For each entry, loads `configs/sites/<dealershipId>.yaml` (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
+3. Runs `ScrapeOnce` against `url`.
+4. For items with both `stockId` and at least one image, `POST <INVENTORY_API_BASE_URL>/updateAccountInventoryImages` with `{accountID, items: [{stockId, images}]}`.
+
+**2. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
+Same scrape pipeline as image refresh, but for items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields (`stockId, url, title, year, make, model, vin, primaryImage, images, price, mileage`).
+
+**3. Idempotency clear** (`ENABLE_IDEMPOTENCY_CLEAR_CRON`, `IDEMPOTENCY_CLEAR_CRON_SPEC`, default `@daily`)
+Wipes the idempotency-key → result mapping so old keys can be reused. Result rows themselves are kept (still queryable by `resultId`).
+
+Each per-dealership scrape is also persisted to SQLite for inspection via `GET /v1/results/:resultId`.
+
 ## Config
 Copy `.env.example` to `.env`.
 
 Key vars:
 - `SERVICE_KEY`
-- `MONGO_URI`
+- `SQLITE_PATH` (default `data/scraper_results.db`)
 - `ENABLE_HMAC`, `HMAC_SECRET`
 - `DEFAULT_RUN_TIMEOUT_SEC`, `SCRAPE_CONCURRENCY`
-- `ENABLE_CRON`, `CRON_SPEC`
+- `ENABLE_IMAGE_UPDATE_CRON` + `IMAGE_UPDATE_CRON_SPEC` (default `0 0 */2 * * *`, every 2 hours) — image-only refresh
+- `ENABLE_DAILY_UPSERT_CRON` + `DAILY_UPSERT_CRON_SPEC` (default `@daily`) — full inventory upsert
+- `ENABLE_IDEMPOTENCY_CLEAR_CRON` + `IDEMPOTENCY_CLEAR_CRON_SPEC` (default `@daily`) — clears idempotency-key → result mapping
+- `INVENTORY_API_BASE_URL` (default `http://localhost`)
+- `ERROR_LOG_PATH` (default `data/errors.log`) — error-level (and above) log entries are appended here in JSON
 - `ENABLE_CODEX_DISCOVERY`, `OPENAI_API_KEY`, `OPENAI_MODEL`
 
 ## Codex Discovery Mode
@@ -109,6 +134,8 @@ curl -X POST http://localhost:8080/v1/scrape/discover-flow \
   -H "X-Service-Key: replace-with-strong-key" \
   -d '{"dealershipId":"txtcharlie","sourceUrl":"https://www.txtcharlie.com/inventory/"}'
 ```
+
+Discovered configs are cached in-process memory (not written to YAML); they are lost on restart and re-discovered on the next request.
 
 ## Site Adapters
 Add new YAML under `configs/sites/<dealer>.yaml`:

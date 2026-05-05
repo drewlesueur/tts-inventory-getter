@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/inventory-scraper/internal/config"
-	"github.com/example/inventory-scraper/internal/model"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 type Service struct {
@@ -35,7 +35,7 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 		}
 	}
 	if html == "" {
-		renderErr = Retry(ctx, 3, func() error {
+		renderErr = Retry(ctx, 1, func() error {
 			h, err := s.Fetcher.Fetch(ctx, sourceURL)
 			if err != nil {
 				return err
@@ -51,8 +51,17 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 
 	allItems := make([]model.InventoryItem, 0)
 	errs := make([]model.StructuredError, 0)
+	haveStructuredItems := false
 	for _, ex := range s.Extractors {
+		if _, isRegex := ex.(RegexExtractor); isRegex && haveStructuredItems {
+			continue
+		}
 		items, e := ex.Extract(ctx, html, sourceURL, site)
+		if len(items) > 0 {
+			if _, isRegex := ex.(RegexExtractor); !isRegex {
+				haveStructuredItems = true
+			}
+		}
 		allItems = append(allItems, items...)
 		errs = append(errs, e...)
 	}
@@ -77,10 +86,6 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 		}
 		if len(site.DetailPage.ImageSelectors) == 0 && site.DetailPage.VINSelector == "" {
 			break
-		}
-		// Skip expensive detail-page fetch when we already have useful media and no VIN is requested.
-		if site.DetailPage.VINSelector == "" && (allItems[idx].PrimaryImage != "" || len(allItems[idx].Images) > 0) {
-			continue
 		}
 		sem <- struct{}{}
 		wg.Add(1)
@@ -124,7 +129,7 @@ func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site confi
 	if html != "" {
 		fetchErr = nil
 	} else {
-		fetchErr = Retry(ctx, 3, func() error {
+		fetchErr = Retry(ctx, 1, func() error {
 			if uf, ok := s.Fetcher.(unsafeFetcher); ok {
 				h, err := uf.FetchUnsafe(ctx, sourceURL)
 				if err != nil {
@@ -147,8 +152,17 @@ func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site confi
 
 	allItems := make([]model.InventoryItem, 0)
 	errs := make([]model.StructuredError, 0)
+	haveStructuredItems := false
 	for _, ex := range s.Extractors {
+		if _, isRegex := ex.(RegexExtractor); isRegex && haveStructuredItems {
+			continue
+		}
 		items, e := ex.Extract(ctx, html, sourceURL, site)
+		if len(items) > 0 {
+			if _, isRegex := ex.(RegexExtractor); !isRegex {
+				haveStructuredItems = true
+			}
+		}
 		allItems = append(allItems, items...)
 		errs = append(errs, e...)
 	}

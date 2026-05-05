@@ -3,7 +3,7 @@ package scrape
 import (
 	"testing"
 
-	"github.com/example/inventory-scraper/internal/model"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 func TestNormalizeItem(t *testing.T) {

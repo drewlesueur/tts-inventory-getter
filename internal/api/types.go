@@ -1,6 +1,6 @@
 package api
 
-import "github.com/example/inventory-scraper/internal/config"
+import "github.com/drewlesueur/tts-inventory-getter/internal/config"
 
 type ScrapeOnceRequest struct {
 	DealershipID   string             `json:"dealershipId" binding:"required"`

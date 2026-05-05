@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"github.com/example/inventory-scraper/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
 type ChromeBrowser struct {

@@ -40,6 +40,23 @@ type RunSummary struct {
 	IdempotencyKey string    `json:"idempotencyKey,omitempty" bson:"idempotencyKey,omitempty"`
 }
 
+type ScrapeResult struct {
+	ResultID       string            `json:"resultId"`
+	DealershipID   string            `json:"dealershipId"`
+	SourceURL      string            `json:"sourceUrl"`
+	Status         RunStatus         `json:"status"`
+	StartedAt      time.Time         `json:"startedAt"`
+	FinishedAt     time.Time         `json:"finishedAt,omitempty"`
+	TotalItems     int               `json:"totalItems"`
+	SuccessItems   int               `json:"successItems"`
+	FailedItems    int               `json:"failedItems"`
+	FailureReason  string            `json:"failureReason,omitempty"`
+	ErrorCount     int               `json:"errorCount"`
+	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
+	Items          []InventoryItem   `json:"items,omitempty"`
+	Errors         []StructuredError `json:"errors,omitempty"`
+}
+
 type StructuredError struct {
 	Code    string `json:"code" bson:"code"`
 	Message string `json:"message" bson:"message"`

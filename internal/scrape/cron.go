@@ -7,7 +7,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 
-	"github.com/example/inventory-scraper/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
 type CronRunner struct {

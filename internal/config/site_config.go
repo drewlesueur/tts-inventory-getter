@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -46,11 +48,61 @@ type RegexConfig struct {
 	VIN   []string `yaml:"vin" json:"vin"`
 }
 
-type Loader struct { Dir string }
+type Loader struct {
+	Dir   string
+	cache *siteCache
+}
+
+type siteCache struct {
+	mu sync.RWMutex
+	m  map[string]SiteConfig
+}
+
+func NewLoader(dir string) Loader {
+	return Loader{Dir: dir, cache: &siteCache{m: map[string]SiteConfig{}}}
+}
 
 func (l Loader) LoadByName(name string) (SiteConfig, error) {
-	p := filepath.Join(l.Dir, name+".yaml")
-	return l.LoadByPath(p)
+	if l.cache != nil {
+		l.cache.mu.RLock()
+		cfg, ok := l.cache.m[name]
+		l.cache.mu.RUnlock()
+		if ok {
+			return cfg, nil
+		}
+	}
+	return SiteConfig{}, fmt.Errorf("site config not cached: %s", name)
+}
+
+func (l Loader) WarmCache() (int, error) {
+	if l.cache == nil || l.Dir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(l.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	loaded := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		cfg, err := l.LoadByPath(filepath.Join(l.Dir, name))
+		if err != nil {
+			continue
+		}
+		key := strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+		l.Cache(key, cfg)
+		loaded++
+	}
+	return loaded, nil
 }
 
 func (l Loader) LoadByPath(path string) (SiteConfig, error) {
@@ -64,4 +116,16 @@ func (l Loader) LoadByPath(path string) (SiteConfig, error) {
 	if cfg.ListPage.Pagination.MaxPages == 0 { cfg.ListPage.Pagination.MaxPages = 5 }
 	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 { cfg.ListPage.Pagination.ScrollMaxAttempts = 8 }
 	return cfg, nil
+}
+
+func (l Loader) Cache(name string, cfg SiteConfig) {
+	if l.cache == nil {
+		return
+	}
+	if cfg.Name == "" {
+		cfg.Name = name
+	}
+	l.cache.mu.Lock()
+	l.cache.m[name] = cfg
+	l.cache.mu.Unlock()
 }
