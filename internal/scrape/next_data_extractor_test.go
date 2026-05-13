@@ -8,7 +8,7 @@ import (
 )
 
 func TestNextDataExtractor_ExtractsVehicleObjects(t *testing.T) {
-	html := `<!doctype html><html><body><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"inventory":{"results":[{"year":2023,"make":"Ferrari","model":"Purosangue","stock_no":"6604","vin":"ZSG06VTA9P0301099","url":"/vehicle-details/2023-ferrari-purosangue-6604/","primary_image":"https://example.com/f1.jpg","images":["https://example.com/f1.jpg","https://example.com/f2.jpg"],"price":486399}]}}}}</script></body></html>`
+	html := `<!doctype html><html><body><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"inventory":{"results":[{"year":2023,"make":"Ferrari","model":"Purosangue","stock_no":"6604","vin":"ZSG06VTA9P0301099","url":"/vehicle-details/2023-ferrari-purosangue-6604/","primary_image":"https://example.com/f1.jpg","images":["https://example.com/f1.jpg","https://example.com/f2.jpg"],"price":486399,"engine":"6.5L V12","transmission":"8-Speed Automatic","drivetrain":"AWD"}]}}}}</script></body></html>`
 
 	items, errs := (NextDataExtractor{}).Extract(context.Background(), html, "https://www.idealcarsaz.com/used-cars-in-mesa-az", config.SiteConfig{})
 	if len(errs) != 0 {
@@ -29,5 +29,14 @@ func TestNextDataExtractor_ExtractsVehicleObjects(t *testing.T) {
 	}
 	if it.URL == "" || it.PrimaryImage == "" || len(it.Images) == 0 {
 		t.Fatalf("expected url/image fields populated: %+v", it)
+	}
+	if it.Engine != "6.5L V12" {
+		t.Fatalf("unexpected engine: %q", it.Engine)
+	}
+	if it.Transmission != "8-Speed Automatic" {
+		t.Fatalf("unexpected transmission: %q", it.Transmission)
+	}
+	if it.DriveType != "AWD" {
+		t.Fatalf("unexpected driveType: %q", it.DriveType)
 	}
 }

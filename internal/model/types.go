@@ -15,6 +15,9 @@ type InventoryItem struct {
 	Images       []string `json:"images,omitempty"`
 	Price        string   `json:"price,omitempty"`
 	Mileage      string   `json:"mileage,omitempty"`
+	Engine       string   `json:"engine,omitempty"`
+	Transmission string   `json:"transmission,omitempty"`
+	DriveType    string   `json:"driveType,omitempty"`
 }
 
 type RunStatus string

@@ -32,6 +32,8 @@ var (
 	loopMakeClassRe  = regexp.MustCompile(`(?:^|\s)make-([a-zA-Z0-9\-]+)(?:\s|$)`)
 	loopModelClassRe = regexp.MustCompile(`(?:^|\s)model-([a-zA-Z0-9\-]+)(?:\s|$)`)
 	loopTitlePartsRe = regexp.MustCompile(`^\s*((?:19|20)\d{2})?\s*([A-Za-z0-9]+)?\s*(.*)$`)
+	loopPriceRe      = regexp.MustCompile(`(?is)\$\s*([0-9][0-9,]*)`)
+	loopMileageRe    = regexp.MustCompile(`(?is)([0-9][0-9,]*)\s*(?:miles?|mi\b)`)
 )
 
 func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -113,6 +115,12 @@ func (l LoopHTMLExtractor) Extract(_ context.Context, html, pageURL string, _ co
 			item.Title = m[1]
 		} else if m := loopTitleAnyRe.FindStringSubmatch(segment); len(m) > 1 {
 			item.Title = m[1]
+		}
+		if m := loopPriceRe.FindStringSubmatch(segment); len(m) > 1 {
+			item.Price = "$" + m[1]
+		}
+		if m := loopMileageRe.FindStringSubmatch(segment); len(m) > 1 {
+			item.Mileage = m[1] + " mi"
 		}
 
 		item = NormalizeItem(pageURL, item)
@@ -260,6 +268,9 @@ func vehicleMapToItem(pageURL string, m map[string]any) (model.InventoryItem, bo
 	it.VIN = pickString(m, "vin", "vin_number")
 	it.Mileage = pickString(m, "mileage", "miles", "odometer")
 	it.Price = pickPriceString(m)
+	it.Engine = pickString(m, "engine", "engine_description", "engine_type", "motor")
+	it.Transmission = pickString(m, "transmission", "transmission_description", "trans")
+	it.DriveType = pickString(m, "drive_type", "drivetrain", "drive", "wheel_drive")
 	it.Color = pickString(m, "color", "exterior_color", "ext_color")
 	it.URL = pickURL(m)
 

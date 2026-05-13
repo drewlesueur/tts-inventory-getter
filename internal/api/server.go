@@ -73,7 +73,8 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
 	}
-	if existing, err := s.store.FindByIdempotency(r.Context(), req.IdempotencyKey); err == nil {
+	scopedIdempotencyKey := scopedIdempotencyKey(req.IdempotencyKey, req.DealershipID, req.SourceURL)
+	if existing, err := s.store.FindByIdempotency(r.Context(), scopedIdempotencyKey); err == nil {
 		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
 			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "resultId": existing.ResultID, "result": existing})
 			return
@@ -88,7 +89,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: req.IdempotencyKey}
+	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedIdempotencyKey}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
@@ -99,7 +100,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, req.IdempotencyKey, site, timeout)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
 }
 
@@ -320,6 +321,14 @@ func normalizeSourceURL(raw string) string {
 	u.Path = strings.TrimSuffix(strings.ToLower(u.Path), "/")
 	u.Fragment = ""
 	return u.String()
+}
+
+func scopedIdempotencyKey(rawKey, dealershipID, sourceURL string) string {
+	rawKey = strings.TrimSpace(rawKey)
+	if rawKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s|%s|%s", rawKey, strings.ToLower(strings.TrimSpace(dealershipID)), normalizeSourceURL(canonicalSourceURL(dealershipID, sourceURL)))
 }
 
 func (s *Server) discoverSiteConfig(ctx context.Context, sourceURL, dealershipID string) (config.SiteConfig, error) {
