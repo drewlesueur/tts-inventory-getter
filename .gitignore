@@ -6,3 +6,4 @@ bin/
 .gomodcache/
 data/
 *.db
+config/sites

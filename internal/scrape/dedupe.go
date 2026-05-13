@@ -23,6 +23,10 @@ func Dedupe(items []model.InventoryItem) []model.InventoryItem {
 }
 
 func dedupeKey(it model.InventoryItem) string {
+	vin := strings.ToUpper(strings.TrimSpace(it.VIN))
+	if vin != "" {
+		return "vin:" + vin
+	}
 	stock := strings.ToUpper(strings.TrimSpace(it.StockID))
 	if stock != "" {
 		return "stock:" + stock

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,23 +12,23 @@ import (
 )
 
 type SiteConfig struct {
-	Name       string         `yaml:"name" json:"name"`
-	BaseURL    string         `yaml:"baseUrl" json:"baseUrl"`
-	ListPage   ListPageConfig `yaml:"listPage" json:"listPage"`
+	Name       string           `yaml:"name" json:"name"`
+	BaseURL    string           `yaml:"baseUrl" json:"baseUrl"`
+	ListPage   ListPageConfig   `yaml:"listPage" json:"listPage"`
 	DetailPage DetailPageConfig `yaml:"detailPage" json:"detailPage"`
-	Regex      RegexConfig    `yaml:"regex" json:"regex"`
+	Regex      RegexConfig      `yaml:"regex" json:"regex"`
 }
 
 type ListPageConfig struct {
-	WaitSelectors  []string `yaml:"waitSelectors" json:"waitSelectors"`
-	CardSelector   string   `yaml:"cardSelector" json:"cardSelector"`
-	TitleSelector  string   `yaml:"titleSelector" json:"titleSelector"`
-	URLSelector    string   `yaml:"urlSelector" json:"urlSelector"`
-	StockSelector  string   `yaml:"stockSelector" json:"stockSelector"`
-	PriceSelector  string   `yaml:"priceSelector" json:"priceSelector"`
-	MileageSelector string  `yaml:"mileageSelector" json:"mileageSelector"`
-	ImageSelector  string   `yaml:"imageSelector" json:"imageSelector"`
-	Pagination     PaginationConfig `yaml:"pagination" json:"pagination"`
+	WaitSelectors   []string         `yaml:"waitSelectors" json:"waitSelectors"`
+	CardSelector    string           `yaml:"cardSelector" json:"cardSelector"`
+	TitleSelector   string           `yaml:"titleSelector" json:"titleSelector"`
+	URLSelector     string           `yaml:"urlSelector" json:"urlSelector"`
+	StockSelector   string           `yaml:"stockSelector" json:"stockSelector"`
+	PriceSelector   string           `yaml:"priceSelector" json:"priceSelector"`
+	MileageSelector string           `yaml:"mileageSelector" json:"mileageSelector"`
+	ImageSelector   string           `yaml:"imageSelector" json:"imageSelector"`
+	Pagination      PaginationConfig `yaml:"pagination" json:"pagination"`
 }
 
 type PaginationConfig struct {
@@ -98,7 +99,7 @@ func (l Loader) WarmCache() (int, error) {
 		if err != nil {
 			continue
 		}
-		key := strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+		key := decodeCacheFilename(strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml"))
 		l.Cache(key, cfg)
 		loaded++
 	}
@@ -107,14 +108,19 @@ func (l Loader) WarmCache() (int, error) {
 
 func (l Loader) LoadByPath(path string) (SiteConfig, error) {
 	b, err := os.ReadFile(path)
-	if err != nil { return SiteConfig{}, err }
+	if err != nil {
+		return SiteConfig{}, err
+	}
 	var cfg SiteConfig
-	if err := yaml.Unmarshal(b, &cfg); err != nil { return SiteConfig{}, err }
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return SiteConfig{}, err
+	}
 	if cfg.ListPage.CardSelector == "" {
 		return SiteConfig{}, fmt.Errorf("invalid site config: missing cardSelector")
 	}
-	if cfg.ListPage.Pagination.MaxPages == 0 { cfg.ListPage.Pagination.MaxPages = 5 }
-	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 { cfg.ListPage.Pagination.ScrollMaxAttempts = 8 }
+	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 {
+		cfg.ListPage.Pagination.ScrollMaxAttempts = 8
+	}
 	return cfg, nil
 }
 
@@ -128,4 +134,43 @@ func (l Loader) Cache(name string, cfg SiteConfig) {
 	l.cache.mu.Lock()
 	l.cache.m[name] = cfg
 	l.cache.mu.Unlock()
+}
+
+func (l Loader) SaveByName(name string, cfg SiteConfig) error {
+	if l.Dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(l.Dir, 0o755); err != nil {
+		return err
+	}
+	p := filepath.Join(l.Dir, encodeCacheFilename(name)+".yaml")
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(p, b, 0o644); err != nil {
+		return err
+	}
+	l.Cache(name, cfg)
+	return nil
+}
+
+func encodeCacheFilename(key string) string {
+	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "url::") {
+		enc := base64.RawURLEncoding.EncodeToString([]byte(key))
+		return "urlkey_" + enc
+	}
+	return key
+}
+
+func decodeCacheFilename(name string) string {
+	if strings.HasPrefix(name, "urlkey_") {
+		raw := strings.TrimPrefix(name, "urlkey_")
+		b, err := base64.RawURLEncoding.DecodeString(raw)
+		if err == nil {
+			return string(b)
+		}
+	}
+	return name
 }

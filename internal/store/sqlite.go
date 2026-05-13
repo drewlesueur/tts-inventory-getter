@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
@@ -50,14 +51,32 @@ CREATE TABLE IF NOT EXISTS scrape_results (
   failed_items INTEGER NOT NULL DEFAULT 0,
   failure_reason TEXT,
   error_count INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  is_retrying INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
   idempotency_key TEXT,
   items_json TEXT NOT NULL DEFAULT '[]',
   errors_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scrape_results_idempotency ON scrape_results(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
 `
-	_, err := s.db.Exec(q)
-	return err
+	if _, err := s.db.Exec(q); err != nil {
+		return err
+	}
+	// Backward-compatible migrations for existing DBs.
+	migrations := []string{
+		`ALTER TABLE scrape_results ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE scrape_results ADD COLUMN last_error TEXT`,
+		`ALTER TABLE scrape_results ADD COLUMN is_retrying INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE scrape_results ADD COLUMN next_retry_at TEXT`,
+	}
+	for _, m := range migrations {
+		if _, err := s.db.Exec(m); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteResultStore) UpsertResult(ctx context.Context, result model.ScrapeResult) error {
@@ -72,9 +91,9 @@ func (s *SQLiteResultStore) UpsertResult(ctx context.Context, result model.Scrap
 	const q = `
 INSERT INTO scrape_results (
   result_id, dealership_id, source_url, status, started_at, finished_at,
-  total_items, success_items, failed_items, failure_reason, error_count,
+  total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at,
   idempotency_key, items_json, errors_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(result_id) DO UPDATE SET
   dealership_id=excluded.dealership_id,
   source_url=excluded.source_url,
@@ -86,6 +105,10 @@ ON CONFLICT(result_id) DO UPDATE SET
   failed_items=excluded.failed_items,
   failure_reason=excluded.failure_reason,
   error_count=excluded.error_count,
+  attempt_count=excluded.attempt_count,
+  last_error=excluded.last_error,
+  is_retrying=excluded.is_retrying,
+  next_retry_at=excluded.next_retry_at,
   idempotency_key=excluded.idempotency_key,
   items_json=excluded.items_json,
   errors_json=excluded.errors_json
@@ -93,6 +116,14 @@ ON CONFLICT(result_id) DO UPDATE SET
 	finishedAt := ""
 	if !result.FinishedAt.IsZero() {
 		finishedAt = result.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	nextRetryAt := ""
+	if !result.NextRetryAt.IsZero() {
+		nextRetryAt = result.NextRetryAt.UTC().Format(time.RFC3339Nano)
+	}
+	isRetrying := 0
+	if result.IsRetrying {
+		isRetrying = 1
 	}
 	_, err = s.db.ExecContext(ctx, q,
 		result.ResultID,
@@ -106,6 +137,10 @@ ON CONFLICT(result_id) DO UPDATE SET
 		result.FailedItems,
 		result.FailureReason,
 		result.ErrorCount,
+		result.AttemptCount,
+		result.LastError,
+		isRetrying,
+		nextRetryAt,
 		result.IdempotencyKey,
 		string(items),
 		string(errs),
@@ -114,7 +149,7 @@ ON CONFLICT(result_id) DO UPDATE SET
 }
 
 func (s *SQLiteResultStore) GetResult(ctx context.Context, resultID string) (model.ScrapeResult, error) {
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
 	return s.scanOne(ctx, q, resultID)
 }
 
@@ -132,15 +167,16 @@ func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (
 	if key == "" {
 		return model.ScrapeResult{}, ErrNotFound
 	}
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
 	return s.scanOne(ctx, q, key)
 }
 
 func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) (model.ScrapeResult, error) {
 	var out model.ScrapeResult
 	var status string
-	var startedAt, finishedAt string
+	var startedAt, finishedAt, nextRetryAt string
 	var itemsJSON, errorsJSON string
+	var isRetrying int
 	err := s.db.QueryRowContext(ctx, query, arg).Scan(
 		&out.ResultID,
 		&out.DealershipID,
@@ -153,6 +189,10 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 		&out.FailedItems,
 		&out.FailureReason,
 		&out.ErrorCount,
+		&out.AttemptCount,
+		&out.LastError,
+		&isRetrying,
+		&nextRetryAt,
 		&out.IdempotencyKey,
 		&itemsJSON,
 		&errorsJSON,
@@ -170,6 +210,12 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 	if finishedAt != "" {
 		if out.FinishedAt, err = time.Parse(time.RFC3339Nano, finishedAt); err != nil {
 			return model.ScrapeResult{}, fmt.Errorf("invalid finished_at: %w", err)
+		}
+	}
+	out.IsRetrying = isRetrying == 1
+	if nextRetryAt != "" {
+		if out.NextRetryAt, err = time.Parse(time.RFC3339Nano, nextRetryAt); err != nil {
+			return model.ScrapeResult{}, fmt.Errorf("invalid next_retry_at: %w", err)
 		}
 	}
 	if err := json.Unmarshal([]byte(itemsJSON), &out.Items); err != nil {

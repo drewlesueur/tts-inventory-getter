@@ -17,7 +17,13 @@ type HTTPFetcher struct {
 }
 
 func NewHTTPFetcher() *HTTPFetcher {
-	const requestTimeout = 12 * time.Second
+	return NewHTTPFetcherWithTimeout(25 * time.Second)
+}
+
+func NewHTTPFetcherWithTimeout(requestTimeout time.Duration) *HTTPFetcher {
+	if requestTimeout <= 0 {
+		requestTimeout = 25 * time.Second
+	}
 	client := &http.Client{
 		Timeout: requestTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

@@ -47,7 +47,7 @@ func main() {
 		logger.Fatal("sqlite open failed", zap.Error(err))
 	}
 	defer resultStore.Close()
-	httpFetcher := scrape.NewHTTPFetcher()
+	httpFetcher := scrape.NewHTTPFetcherWithTimeout(time.Duration(cfg.HTTPFetchTimeoutSec) * time.Second)
 	browser, cancelBrowser := scrape.NewChromeBrowser(cfg.Headless)
 	defer cancelBrowser()
 
@@ -56,7 +56,7 @@ func main() {
 		Browser:       browser,
 		Fetcher:       httpFetcher,
 		DetailFetcher: scrape.HTMLDetailFetcher{Fetcher: httpFetcher, Browser: browser, ImageSizes: imageSizes},
-		Extractors:    []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.RegexExtractor{}},
+		Extractors:    []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
 		Concurrency:   cfg.Concurrency,
 	}
 

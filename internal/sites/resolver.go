@@ -2,7 +2,10 @@ package sites
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -27,11 +30,16 @@ type Resolver struct {
 }
 
 func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (config.SiteConfig, error) {
-	if site, err := r.Loader.LoadByName(dealershipID); err == nil {
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" {
+		return config.SiteConfig{}, fmt.Errorf("sourceUrl is required")
+	}
+	urlKey := cacheKeyForSourceURL(sourceURL)
+	if site, err := r.Loader.LoadByName(urlKey); err == nil {
 		return site, nil
 	}
 	if r.Discover == nil {
-		return config.SiteConfig{}, fmt.Errorf("site config not cached and Codex discovery disabled: %s", dealershipID)
+		return config.SiteConfig{}, fmt.Errorf("site config not cached for url=%s and Codex discovery disabled", sourceURL)
 	}
 	var html string
 	if r.Browser != nil {
@@ -53,12 +61,21 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 	if err != nil {
 		return config.SiteConfig{}, fmt.Errorf("discovery failed: %w", err)
 	}
-	if dealershipID != "" {
-		proposed.Name = dealershipID
+	if proposed.Name == "" {
+		proposed.Name = urlKey
 	}
-	r.Loader.Cache(dealershipID, proposed)
+	r.Loader.Cache(urlKey, proposed)
+	if err := r.Loader.SaveByName(urlKey, proposed); err != nil && r.Logger != nil {
+		r.Logger.Warn("failed to persist url-keyed site config", zap.String("urlKey", urlKey), zap.Error(err))
+	}
 	if r.Logger != nil {
-		r.Logger.Info("site config discovered and cached", zap.String("dealershipId", dealershipID))
+		proposedJSON, _ := json.MarshalIndent(proposed, "", "  ")
+		r.Logger.Info("site config discovered and cached",
+			zap.String("dealershipId", dealershipID),
+			zap.String("urlKey", urlKey),
+			zap.String("sourceURL", sourceURL),
+			zap.ByteString("proposedConfig", proposedJSON),
+		)
 	}
 	return proposed, nil
 }
@@ -70,4 +87,17 @@ func safeRender(ctx context.Context, browser Renderer, sourceURL string) (html s
 		}
 	}()
 	return browser.Render(ctx, sourceURL, config.SiteConfig{})
+}
+
+func cacheKeyForSourceURL(sourceURL string) string {
+	u, err := url.Parse(sourceURL)
+	if err != nil || u.Host == "" {
+		return "url::" + strings.ToLower(strings.TrimSpace(sourceURL))
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.Trim(strings.ToLower(u.EscapedPath()), "/")
+	if path == "" {
+		path = "_root"
+	}
+	return "url::" + host + "/" + path
 }

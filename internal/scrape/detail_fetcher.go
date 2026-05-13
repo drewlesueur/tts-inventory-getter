@@ -114,6 +114,7 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 			}
 		}
 	}
+	fillCommonVehicleFields(&item, doc, html)
 	return NormalizeItem(item.URL, item), nil
 }
 
@@ -121,6 +122,60 @@ func findVINInText(text string) string {
 	re := regexp.MustCompile(`\b([A-HJ-NPR-Z0-9]{17})\b`)
 	if m := re.FindStringSubmatch(strings.ToUpper(text)); len(m) > 1 {
 		return m[1]
+	}
+	return ""
+}
+
+func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, html string) {
+	kv := map[string]string{}
+
+	doc.Find("tr").Each(func(_ int, tr *goquery.Selection) {
+		cells := tr.Find("th,td")
+		if cells.Length() >= 2 {
+			k := clean(strings.ToLower(cells.First().Text()))
+			v := clean(cells.Eq(1).Text())
+			if k != "" && v != "" {
+				kv[k] = v
+			}
+		}
+	})
+	doc.Find("dt").Each(func(_ int, dt *goquery.Selection) {
+		k := clean(strings.ToLower(dt.Text()))
+		v := clean(dt.Next().Text())
+		if k != "" && v != "" {
+			kv[k] = v
+		}
+	})
+
+	if item.Make == "" {
+		item.Make = pickValueByLabel(kv, "make")
+	}
+	if item.Model == "" {
+		item.Model = pickValueByLabel(kv, "model")
+	}
+	if item.Year == "" {
+		item.Year = pickValueByLabel(kv, "year")
+	}
+	if item.Color == "" {
+		item.Color = pickValueByLabel(kv, "color", "exterior color", "ext color")
+	}
+
+	if item.Color == "" {
+		re := regexp.MustCompile(`(?i)\b(?:exterior\s+color|color)\b[:\s]+([a-z0-9][a-z0-9\s\-\/]{1,40})`)
+		if m := re.FindStringSubmatch(html); len(m) > 1 {
+			item.Color = clean(m[1])
+		}
+	}
+}
+
+func pickValueByLabel(kv map[string]string, labels ...string) string {
+	for _, want := range labels {
+		want = strings.ToLower(strings.TrimSpace(want))
+		for k, v := range kv {
+			if k == want || strings.HasPrefix(k, want+":") || strings.Contains(k, want) {
+				return v
+			}
+		}
 	}
 	return ""
 }

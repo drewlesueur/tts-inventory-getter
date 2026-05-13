@@ -2,7 +2,10 @@ package scrape
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -15,19 +18,20 @@ type DOMExtractor struct{}
 type LoopHTMLExtractor struct{}
 
 type RegexExtractor struct{}
+type NextDataExtractor struct{}
 
 var (
-	loopClassRe       = regexp.MustCompile(`(?is)<div[^>]+class="([^"]+)"`)
-	loopVehicleURLRe  = regexp.MustCompile(`(?is)href="([^"]*vehicle-details/[^"]+)"`)
-	loopDataSrcImgRe  = regexp.MustCompile(`(?is)<img[^>]+data-src="([^"]+)"`)
-	loopSrcImgRe      = regexp.MustCompile(`(?is)<img[^>]+src="([^"]+)"`)
-	loopStockTextRe   = regexp.MustCompile(`(?is)STOCK#\s*([A-Za-z0-9\-]+)`)
-	loopStockClassRe  = regexp.MustCompile(`(?:^|\s)stock-([a-zA-Z0-9\-]+)(?:\s|$)`)
-	loopTitleHRe      = regexp.MustCompile(`(?is)<h[1-4][^>]*>\s*<a[^>]*href="[^"]*vehicle-details/[^"]+"[^>]*>([^<]+)</a>`)
-	loopTitleAnyRe    = regexp.MustCompile(`(?is)<a[^>]*href="[^"]*vehicle-details/[^"]+"[^>]*>([^<]+)</a>`)
-	loopMakeClassRe   = regexp.MustCompile(`(?:^|\s)make-([a-zA-Z0-9\-]+)(?:\s|$)`)
-	loopModelClassRe  = regexp.MustCompile(`(?:^|\s)model-([a-zA-Z0-9\-]+)(?:\s|$)`)
-	loopTitlePartsRe  = regexp.MustCompile(`^\s*((?:19|20)\d{2})?\s*([A-Za-z0-9]+)?\s*(.*)$`)
+	loopClassRe      = regexp.MustCompile(`(?is)<div[^>]+class="([^"]+)"`)
+	loopVehicleURLRe = regexp.MustCompile(`(?is)href="([^"]*vehicle-details/[^"]+)"`)
+	loopDataSrcImgRe = regexp.MustCompile(`(?is)<img[^>]+data-src="([^"]+)"`)
+	loopSrcImgRe     = regexp.MustCompile(`(?is)<img[^>]+src="([^"]+)"`)
+	loopStockTextRe  = regexp.MustCompile(`(?is)STOCK#\s*([A-Za-z0-9\-]+)`)
+	loopStockClassRe = regexp.MustCompile(`(?:^|\s)stock-([a-zA-Z0-9\-]+)(?:\s|$)`)
+	loopTitleHRe     = regexp.MustCompile(`(?is)<h[1-4][^>]*>\s*<a[^>]*href="[^"]*vehicle-details/[^"]+"[^>]*>([^<]+)</a>`)
+	loopTitleAnyRe   = regexp.MustCompile(`(?is)<a[^>]*href="[^"]*vehicle-details/[^"]+"[^>]*>([^<]+)</a>`)
+	loopMakeClassRe  = regexp.MustCompile(`(?:^|\s)make-([a-zA-Z0-9\-]+)(?:\s|$)`)
+	loopModelClassRe = regexp.MustCompile(`(?:^|\s)model-([a-zA-Z0-9\-]+)(?:\s|$)`)
+	loopTitlePartsRe = regexp.MustCompile(`^\s*((?:19|20)\d{2})?\s*([A-Za-z0-9]+)?\s*(.*)$`)
 )
 
 func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -162,4 +166,227 @@ func (r RegexExtractor) Extract(_ context.Context, html, pageURL string, site co
 		errs = append(errs, model.StructuredError{Code: "FALLBACK_EMPTY", Message: "regex fallback found no items"})
 	}
 	return items, errs
+}
+
+func (n NextDataExtractor) Extract(_ context.Context, html, pageURL string, _ config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
+	const marker = `<script id="__NEXT_DATA__" type="application/json">`
+	start := strings.Index(html, marker)
+	if start == -1 {
+		return nil, nil
+	}
+	start += len(marker)
+	end := strings.Index(html[start:], `</script>`)
+	if end == -1 {
+		return nil, []model.StructuredError{{Code: "NEXT_DATA_PARSE", Message: "next data script end not found"}}
+	}
+	raw := strings.TrimSpace(html[start : start+end])
+	if raw == "" {
+		return nil, nil
+	}
+
+	var root any
+	if err := json.Unmarshal([]byte(raw), &root); err != nil {
+		return nil, []model.StructuredError{{Code: "NEXT_DATA_PARSE", Message: err.Error()}}
+	}
+
+	items := make([]model.InventoryItem, 0, 256)
+	seen := map[string]struct{}{}
+	walkForVehicleMaps(root, func(m map[string]any) {
+		item, ok := vehicleMapToItem(pageURL, m)
+		if !ok {
+			return
+		}
+		key := item.URL + "|" + item.StockID + "|" + item.VIN + "|" + item.Title
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		items = append(items, NormalizeItem(pageURL, item))
+	})
+
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return Dedupe(items), nil
+}
+
+func walkForVehicleMaps(v any, fn func(map[string]any)) {
+	switch t := v.(type) {
+	case map[string]any:
+		if looksLikeVehicleMap(t) {
+			fn(t)
+		}
+		for _, vv := range t {
+			walkForVehicleMaps(vv, fn)
+		}
+	case []any:
+		for _, vv := range t {
+			walkForVehicleMaps(vv, fn)
+		}
+	}
+}
+
+func looksLikeVehicleMap(m map[string]any) bool {
+	makeV := pickString(m, "make")
+	modelV := pickString(m, "model")
+	yearV := pickYearString(m)
+	stock := pickString(m, "stock", "stock_no", "stocknumber", "stock_number", "stockid")
+	url := pickURL(m)
+	score := 0
+	if makeV != "" {
+		score++
+	}
+	if modelV != "" {
+		score++
+	}
+	if yearV != "" {
+		score++
+	}
+	if stock != "" {
+		score++
+	}
+	if url != "" {
+		score++
+	}
+	return score >= 3
+}
+
+func vehicleMapToItem(pageURL string, m map[string]any) (model.InventoryItem, bool) {
+	it := model.InventoryItem{}
+	it.Make = pickString(m, "make")
+	it.Model = pickString(m, "model")
+	it.Year = pickYearString(m)
+	it.StockID = pickString(m, "stock", "stock_no", "stocknumber", "stock_number", "stockid")
+	it.VIN = pickString(m, "vin", "vin_number")
+	it.Mileage = pickString(m, "mileage", "miles", "odometer")
+	it.Price = pickPriceString(m)
+	it.Color = pickString(m, "color", "exterior_color", "ext_color")
+	it.URL = pickURL(m)
+
+	if title := pickString(m, "title", "name", "vehicle_title"); title != "" {
+		it.Title = title
+	} else {
+		parts := []string{it.Year, it.Make, it.Model}
+		it.Title = strings.TrimSpace(strings.Join(parts, " "))
+	}
+
+	imgs := pickImageList(m)
+	if len(imgs) > 0 {
+		it.Images = imgs
+		it.PrimaryImage = imgs[0]
+	}
+
+	normalized := NormalizeItem(pageURL, it)
+	if normalized.URL == "" && normalized.StockID == "" && normalized.Title == "" {
+		return model.InventoryItem{}, false
+	}
+	return normalized, true
+}
+
+func pickURL(m map[string]any) string {
+	candidates := []string{"url", "vehicle_url", "vdp_url", "detail_url", "permalink", "link", "slug"}
+	for _, k := range candidates {
+		if s := pickString(m, k); s != "" {
+			if strings.HasPrefix(s, "/") || strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func pickPriceString(m map[string]any) string {
+	for _, k := range []string{"price", "internet_price", "special_price", "list_price", "sale_price"} {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case string:
+				if strings.TrimSpace(t) != "" {
+					return t
+				}
+			case float64:
+				if t > 0 {
+					return fmt.Sprintf("%.0f", t)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func pickYearString(m map[string]any) string {
+	if s := pickString(m, "year", "model_year"); s != "" {
+		re := regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+		if y := re.FindString(s); y != "" {
+			return y
+		}
+		if len(s) == 4 {
+			return s
+		}
+	}
+	for _, k := range []string{"year", "model_year"} {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case float64:
+				n := int(t)
+				if n >= 1900 && n <= 2099 {
+					return strconv.Itoa(n)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func pickString(m map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := m[key]; ok {
+			switch t := v.(type) {
+			case string:
+				if strings.TrimSpace(t) != "" {
+					return t
+				}
+			case float64:
+				return fmt.Sprintf("%.0f", t)
+			}
+		}
+	}
+	return ""
+}
+
+func pickImageList(m map[string]any) []string {
+	out := make([]string, 0, 4)
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "/") {
+			return
+		}
+		out = append(out, s)
+	}
+	for _, key := range []string{"primary_image", "primary_photo", "image", "image_url", "photo"} {
+		add(pickString(m, key))
+	}
+	for _, key := range []string{"images", "photos", "gallery"} {
+		v, ok := m[key]
+		if !ok {
+			continue
+		}
+		arr, ok := v.([]any)
+		if !ok {
+			continue
+		}
+		for _, el := range arr {
+			switch tt := el.(type) {
+			case string:
+				add(tt)
+			case map[string]any:
+				for _, k := range []string{"url", "src", "image", "photo"} {
+					add(pickString(tt, k))
+				}
+			}
+		}
+	}
+	return uniqueStrings(out)
 }

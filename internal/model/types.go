@@ -9,6 +9,7 @@ type InventoryItem struct {
 	Year         string   `json:"year,omitempty"`
 	Make         string   `json:"make,omitempty"`
 	Model        string   `json:"model,omitempty"`
+	Color        string   `json:"color,omitempty"`
 	VIN          string   `json:"vin,omitempty"`
 	PrimaryImage string   `json:"primaryImage,omitempty"`
 	Images       []string `json:"images,omitempty"`
@@ -52,6 +53,10 @@ type ScrapeResult struct {
 	FailedItems    int               `json:"failedItems"`
 	FailureReason  string            `json:"failureReason,omitempty"`
 	ErrorCount     int               `json:"errorCount"`
+	AttemptCount   int               `json:"attemptCount"`
+	LastError      string            `json:"lastError,omitempty"`
+	IsRetrying     bool              `json:"isRetrying,omitempty"`
+	NextRetryAt    time.Time         `json:"nextRetryAt,omitempty"`
 	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
 	Items          []InventoryItem   `json:"items,omitempty"`
 	Errors         []StructuredError `json:"errors,omitempty"`

@@ -74,8 +74,10 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing, err := s.store.FindByIdempotency(r.Context(), req.IdempotencyKey); err == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "resultId": existing.ResultID, "result": existing})
-		return
+		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
+			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "resultId": existing.ResultID, "result": existing})
+			return
+		}
 	}
 
 	site, err := s.resolveSiteConfig(r.Context(), req)
@@ -102,44 +104,105 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKey string, site config.SiteConfig, timeout time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	start := time.Now()
-	result := s.scraper.ScrapeOnce(ctx, sourceURL, site)
-	dur := time.Since(start).Seconds()
-
-	record := model.ScrapeResult{
-		ResultID:       resultID,
-		DealershipID:   dealershipID,
-		SourceURL:      sourceURL,
-		Status:         model.RunStatusSuccess,
-		StartedAt:      start.UTC(),
-		FinishedAt:     time.Now().UTC(),
-		TotalItems:     len(result.Items),
-		SuccessItems:   len(result.Items),
-		FailedItems:    0,
-		ErrorCount:     len(result.Errors),
-		IdempotencyKey: idempotencyKey,
-		Items:          result.Items,
-		Errors:         result.Errors,
+	maxAttempts := s.cfg.ScrapeMaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
 	}
-	if len(result.Errors) > 0 && len(result.Items) > 0 {
-		record.Status = model.RunStatusPartial
+	backoffBase := s.cfg.ScrapeRetryBackoffSec
+	if backoffBase <= 0 {
+		backoffBase = 2
 	}
-	if len(result.Items) == 0 {
-		record.Status = model.RunStatusFailed
-		record.FailureReason = "no inventory extracted"
+	var finalRecord model.ScrapeResult
+	var finalDur float64
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		start := time.Now().UTC()
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		result := s.scraper.ScrapeOnce(ctx, sourceURL, site)
+		cancel()
+		finalDur = time.Since(start).Seconds()
+
+		record := model.ScrapeResult{
+			ResultID:       resultID,
+			DealershipID:   dealershipID,
+			SourceURL:      sourceURL,
+			Status:         model.RunStatusSuccess,
+			StartedAt:      start,
+			FinishedAt:     time.Now().UTC(),
+			TotalItems:     len(result.Items),
+			SuccessItems:   len(result.Items),
+			FailedItems:    0,
+			ErrorCount:     len(result.Errors),
+			AttemptCount:   attempt,
+			IdempotencyKey: idempotencyKey,
+			Items:          result.Items,
+			Errors:         result.Errors,
+			IsRetrying:     false,
+		}
+		if len(result.Errors) > 0 && len(result.Items) > 0 {
+			record.Status = model.RunStatusPartial
+		}
+		if len(result.Items) == 0 {
+			record.Status = model.RunStatusFailed
+			record.FailureReason = "no inventory extracted"
+		}
+		record.LastError = firstErrorMessage(result.Errors)
+		finalRecord = record
+
+		retryable := isRetryableScrapeFailure(result)
+		if !retryable || attempt == maxAttempts {
+			break
+		}
+
+		wait := time.Duration(backoffBase*(1<<(attempt-1))) * time.Second
+		record.IsRetrying = true
+		record.NextRetryAt = time.Now().UTC().Add(wait)
+		if err := s.store.UpsertResult(context.Background(), record); err != nil {
+			s.logger.Error("result store upsert failed", zap.String("resultId", resultID), zap.Error(err))
+			return
+		}
+		time.Sleep(wait)
 	}
 
-	if err := s.store.UpsertResult(context.Background(), record); err != nil {
+	if err := s.store.UpsertResult(context.Background(), finalRecord); err != nil {
 		s.logger.Error("result store upsert failed", zap.String("resultId", resultID), zap.Error(err))
 		return
 	}
-	s.metrics.RunsTotal.WithLabelValues(string(record.Status)).Inc()
-	s.metrics.RunDuration.WithLabelValues(dealershipID).Observe(dur)
-	s.metrics.ItemsScraped.WithLabelValues(dealershipID).Add(float64(len(result.Items)))
-	s.logger.Info("scrape completed", zap.String("resultId", resultID), zap.Int("items", len(result.Items)), zap.Int("errors", len(result.Errors)))
+	s.metrics.RunsTotal.WithLabelValues(string(finalRecord.Status)).Inc()
+	s.metrics.RunDuration.WithLabelValues(dealershipID).Observe(finalDur)
+	s.metrics.ItemsScraped.WithLabelValues(dealershipID).Add(float64(len(finalRecord.Items)))
+	s.logger.Info("scrape completed", zap.String("resultId", resultID), zap.Int("attempts", finalRecord.AttemptCount), zap.Int("items", len(finalRecord.Items)), zap.Int("errors", len(finalRecord.Errors)))
+}
+
+func firstErrorMessage(errs []model.StructuredError) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	return errs[0].Message
+}
+
+func isRetryableScrapeFailure(result scrape.RunResult) bool {
+	if len(result.Items) > 0 {
+		return false
+	}
+	for _, e := range result.Errors {
+		if e.Code == "SCRAPE_RENDER_FAILED" && isTransientErrorMessage(e.Message) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTransientErrorMessage(msg string) bool {
+	l := strings.ToLower(msg)
+	if strings.Contains(l, "blocked redirect to local host") || strings.Contains(l, "blocked redirect to private host") {
+		return false
+	}
+	return strings.Contains(l, "context deadline exceeded") ||
+		strings.Contains(l, "client.timeout") ||
+		strings.Contains(l, "timeout") ||
+		strings.Contains(l, "temporary") ||
+		strings.Contains(l, "connection reset") ||
+		strings.Contains(l, "eof")
 }
 
 func (s *Server) handleGetResult(w http.ResponseWriter, r *http.Request) {
@@ -236,6 +299,27 @@ func canonicalSourceURL(dealershipID, sourceURL string) string {
 		return "https://www.txtcharlie.com/find-vehicles-for-sale-in-ft-lauderdale-fl/"
 	}
 	return sourceURL
+}
+
+func idempotencyTargetMatches(existing model.ScrapeResult, dealershipID, sourceURL string) bool {
+	if !strings.EqualFold(existing.DealershipID, dealershipID) {
+		return false
+	}
+	existingURL := normalizeSourceURL(canonicalSourceURL(existing.DealershipID, existing.SourceURL))
+	requestedURL := normalizeSourceURL(canonicalSourceURL(dealershipID, sourceURL))
+	return existingURL == requestedURL
+}
+
+func normalizeSourceURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimSpace(strings.ToLower(raw))
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.Path = strings.TrimSuffix(strings.ToLower(u.Path), "/")
+	u.Fragment = ""
+	return u.String()
 }
 
 func (s *Server) discoverSiteConfig(ctx context.Context, sourceURL, dealershipID string) (config.SiteConfig, error) {

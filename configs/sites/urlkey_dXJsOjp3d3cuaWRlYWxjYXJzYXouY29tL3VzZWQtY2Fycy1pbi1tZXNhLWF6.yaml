@@ -1,0 +1,28 @@
+name: url::www.idealcarsaz.com/used-cars-in-mesa-az
+baseUrl: https://www.idealcarsaz.com/used-cars-in-mesa-az/
+listPage:
+    waitSelectors: []
+    cardSelector: .vehicle-card, .inventory-item, [class*='vehicle']
+    titleSelector: h2, h3
+    urlSelector: a
+    stockSelector: .stock, [class*='stock']
+    priceSelector: .price, [class*='price']
+    mileageSelector: .mileage, [class*='mileage']
+    imageSelector: img
+    pagination:
+        type: ""
+        nextSelector: ""
+        maxPages: 0
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src]
+        - img[src*='vehicle']
+    vinSelector: ""
+regex:
+    stock:
+        - (?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)
+    vin:
+        - \\b([A-HJ-NPR-Z0-9]{17})\\b
