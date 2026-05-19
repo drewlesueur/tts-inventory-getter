@@ -70,6 +70,15 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
 		return
 	}
+	// Log inbound scrape payload so deploy-only behavior differences (for example maxItems=15)
+	// can be diagnosed from server logs quickly.
+	s.logger.Info("scrape request payload",
+		zap.String("dealershipId", req.DealershipID),
+		zap.String("sourceUrl", req.SourceURL),
+		zap.String("idempotencyKey", req.IdempotencyKey),
+		zap.Any("options", req.Options),
+		zap.Bool("hasSiteConfigOverride", req.SiteConfig != nil),
+	)
 	if req.DealershipID == "" || !validURL(req.SourceURL) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
