@@ -163,8 +163,42 @@ func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.Si
 	site.Discovery.TotalHints = append(site.Discovery.TotalHints, p.Discovery.TotalHints...)
 	site.Discovery.PagingHints = append(site.Discovery.PagingHints, p.Pagination.Hints...)
 	site.Discovery.DiscoveredAt = time.Now().UTC().Format(time.RFC3339)
+	applyDealerSyncDiscoveryDefaults(html, &site)
 
 	return site, nil
+}
+
+func applyDealerSyncDiscoveryDefaults(html string, site *config.SiteConfig) {
+	if site == nil {
+		return
+	}
+	if !strings.Contains(strings.ToLower(html), "ds-inventory-model") {
+		return
+	}
+	if strings.TrimSpace(site.ListPage.CardSelector) == "" || strings.TrimSpace(site.ListPage.CardSelector) == "li" {
+		site.ListPage.CardSelector = ".ds-vehicle-list-item, .srp-card, .vehicle-card, [class*='vehicle'][class*='item'], [class*='inventory'][class*='item']"
+	}
+	if strings.TrimSpace(site.ListPage.URLSelector) == "" || strings.TrimSpace(site.ListPage.URLSelector) == "a" {
+		site.ListPage.URLSelector = "a[href*='/pre-owned-cars/detail/'], a[href*='/vehicle-details/'], a[href*='/inventory/']"
+	}
+	if strings.TrimSpace(site.ListPage.TitleSelector) == "" {
+		site.ListPage.TitleSelector = "h1, h2, h3, h4, [itemprop='name']"
+	}
+	if len(site.ListPage.WaitSelectors) == 0 {
+		site.ListPage.WaitSelectors = []string{
+			".ds-vehicle-list-item, .srp-card, [class*='vehicle'][class*='item'], a[href*='/pre-owned-cars/detail/']",
+		}
+	}
+	if strings.TrimSpace(site.ListPage.PriceSelector) == "" {
+		site.ListPage.PriceSelector = ".price, [class*='price'], [class*='payment'], [class*='internet-price']"
+	}
+	site.ListPage.Pagination.InfiniteScroll = true
+	if site.ListPage.Pagination.ScrollMaxAttempts <= 0 {
+		site.ListPage.Pagination.ScrollMaxAttempts = 25
+	}
+	if site.ListPage.Pagination.ClickMaxAttempts <= 0 {
+		site.ListPage.Pagination.ClickMaxAttempts = 30
+	}
 }
 
 func extractOutputText(r discoveryResponse) string {

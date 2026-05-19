@@ -222,12 +222,20 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 			if _, ok := seen[nextURL]; ok {
 				continue
 			}
-			seen[nextURL] = struct{}{}
-			h, err := s.fetchListHTML(ctx, nextURL, site, strategy)
+			var h string
+			err := Retry(ctx, 2, func() error {
+				pageHTML, ferr := s.fetchListHTML(ctx, nextURL, site, strategy)
+				if ferr != nil {
+					return ferr
+				}
+				h = pageHTML
+				return nil
+			})
 			if err != nil {
 				errs = append(errs, model.StructuredError{Code: "PAGINATION_FETCH_FAILED", Message: err.Error(), ItemURL: nextURL})
 				continue
 			}
+			seen[nextURL] = struct{}{}
 			pages = append(pages, scrapedPageHTML{url: nextURL, html: h})
 		}
 		idx++

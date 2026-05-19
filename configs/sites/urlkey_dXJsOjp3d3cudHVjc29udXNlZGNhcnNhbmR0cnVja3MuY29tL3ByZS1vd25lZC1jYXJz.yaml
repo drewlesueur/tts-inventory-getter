@@ -4,10 +4,10 @@ listPage:
     waitSelectors:
         - .ds-vehicle-list-item, .srp-card, [class*='vehicle'][class*='item'], a[href*='/pre-owned-cars/detail/']
     cardSelector: .ds-vehicle-list-item, .srp-card, .vehicle-card, [class*='vehicle'][class*='item'], [class*='inventory'][class*='item']
-    titleSelector: h1, h2, h3, h4, [itemprop='name']
+    titleSelector: h2, h3
     urlSelector: a[href*='/pre-owned-cars/detail/'], a[href*='/vehicle-details/'], a[href*='/inventory/']
     stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
-    priceSelector: .price, [class*='price'], [class*='payment'], [class*='internet-price']
+    priceSelector: .price, [class*='price']
     mileageSelector: .mileage, [class*='mileage']
     imageSelector: img
     totalSelector: ""
@@ -32,4 +32,4 @@ regex:
     vin:
         - \\b([A-HJ-NPR-Z0-9]{17})\\b
 discovery:
-    discoveredAt: "2026-05-20T00:20:00+05:45"
+    discoveredAt: "2026-05-19T20:56:16Z"
