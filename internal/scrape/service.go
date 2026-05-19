@@ -13,6 +13,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
+	"go.uber.org/zap"
 )
 
 type Service struct {
@@ -23,6 +24,7 @@ type Service struct {
 	Extractors    []Extractor
 	Concurrency   int
 	AIEnricher    *AIEnricher
+	Logger        *zap.Logger
 }
 
 type unsafeFetcher interface {
@@ -40,6 +42,15 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	}
 	detectedTotal := detectInventoryTotal(firstHTML, site)
 	effectiveMaxItems := effectiveMaxItems(site.ListPage.MaxItems, detectedTotal)
+	if s.Logger != nil {
+		s.Logger.Info("scrape pagination baseline",
+			zap.String("sourceUrl", sourceURL),
+			zap.Int("detectedTotal", detectedTotal),
+			zap.Int("configuredMaxPages", site.ListPage.Pagination.MaxPages),
+			zap.Int("effectiveMaxItems", effectiveMaxItems),
+			zap.String("cardSelector", site.ListPage.CardSelector),
+		)
+	}
 	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy)
 
 	allItems := make([]model.InventoryItem, 0)
@@ -202,6 +213,13 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 			maxPages = 200
 		}
 	}
+	if s.Logger != nil {
+		s.Logger.Info("collect pagination plan",
+			zap.String("sourceUrl", sourceURL),
+			zap.Int("maxPages", maxPages),
+			zap.Int("inferredDealerSyncPages", inferDealerSyncPageCount(firstHTML)),
+		)
+	}
 	pages := []scrapedPageHTML{{url: sourceURL, html: firstHTML}}
 	if maxPages == 1 {
 		return pages, nil
@@ -214,6 +232,14 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 		nextURLs := extractNextPageURLs(cur.url, cur.html, site)
 		if len(nextURLs) == 0 {
 			nextURLs = inferDealerSyncFallbackURLs(cur.url, cur.html, maxPages-len(pages))
+		}
+		if s.Logger != nil {
+			s.Logger.Info("collect pagination step",
+				zap.String("currentUrl", cur.url),
+				zap.Int("currentPageIndex", idx),
+				zap.Int("nextUrlCount", len(nextURLs)),
+				zap.Int("pagesCollected", len(pages)),
+			)
 		}
 		for _, nextURL := range nextURLs {
 			if len(pages) >= maxPages {
@@ -233,10 +259,16 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 			})
 			if err != nil {
 				errs = append(errs, model.StructuredError{Code: "PAGINATION_FETCH_FAILED", Message: err.Error(), ItemURL: nextURL})
+				if s.Logger != nil {
+					s.Logger.Warn("pagination fetch failed", zap.String("nextUrl", nextURL), zap.Error(err))
+				}
 				continue
 			}
 			seen[nextURL] = struct{}{}
 			pages = append(pages, scrapedPageHTML{url: nextURL, html: h})
+			if s.Logger != nil {
+				s.Logger.Info("pagination page collected", zap.String("nextUrl", nextURL), zap.Int("pagesCollected", len(pages)))
+			}
 		}
 		idx++
 	}

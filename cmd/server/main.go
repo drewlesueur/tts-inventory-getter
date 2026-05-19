@@ -61,6 +61,7 @@ func main() {
 		Extractors:    []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
 		Concurrency:   cfg.Concurrency,
 		AIEnricher:    &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
+		Logger:        logger,
 	}
 
 	m := metrics.New()
