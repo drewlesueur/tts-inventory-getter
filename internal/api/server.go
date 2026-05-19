@@ -116,9 +116,6 @@ func (s *Server) applyCrawlLimits(site config.SiteConfig, opts *ScrapeOptions) c
 	if site.ListPage.Pagination.ClickMaxAttempts <= 0 {
 		site.ListPage.Pagination.ClickMaxAttempts = s.cfg.DefaultMaxLoadMoreClicks
 	}
-	if site.ListPage.MaxItems <= 0 {
-		site.ListPage.MaxItems = s.cfg.DefaultMaxItems
-	}
 	if opts == nil {
 		return site
 	}
