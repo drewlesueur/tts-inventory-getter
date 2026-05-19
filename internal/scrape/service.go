@@ -162,6 +162,12 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		break
 	}
 	if html == "" {
+		if s.Fetcher == nil {
+			if renderErr != nil {
+				return "", renderErr
+			}
+			return "", fmt.Errorf("no browser html and fetcher is nil")
+		}
 		renderErr = Retry(ctx, 1, func() error {
 			h, err := s.Fetcher.Fetch(ctx, pageURL)
 			if err != nil {
@@ -187,6 +193,14 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 	maxPages := site.ListPage.Pagination.MaxPages
 	if maxPages <= 0 {
 		maxPages = 20
+	}
+	if inferredPages := inferDealerSyncPageCount(firstHTML); inferredPages > maxPages {
+		// Deploy environments sometimes end up with too-low maxPages (or stale config).
+		// If DealerSync metadata clearly indicates more pages, expand safely.
+		maxPages = inferredPages
+		if maxPages > 200 {
+			maxPages = 200
+		}
 	}
 	pages := []scrapedPageHTML{{url: sourceURL, html: firstHTML}}
 	if maxPages == 1 {
@@ -358,6 +372,27 @@ func extractDealerSyncPageURLs(pageURL string, doc *goquery.Document) []string {
 	q.Set("ai_page", strconv.Itoa(next))
 	u.RawQuery = q.Encode()
 	return []string{u.String()}
+}
+
+func inferDealerSyncPageCount(html string) int {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return 0
+	}
+	model := doc.Find("#ds-inventory-model").First()
+	if model.Length() == 0 {
+		return 0
+	}
+	total := parsePositiveInt(model.AttrOr("data-results-total", "0"))
+	count := parsePositiveInt(model.AttrOr("data-results-count", "0"))
+	if total <= 0 || count <= 0 {
+		return 0
+	}
+	pages := (total + count - 1) / count
+	if pages < 1 {
+		return 1
+	}
+	return pages
 }
 
 func parsePositiveInt(s string) int {
