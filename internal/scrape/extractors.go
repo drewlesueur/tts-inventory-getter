@@ -36,6 +36,7 @@ var (
 	loopPriceRe      = regexp.MustCompile(`(?is)\$\s*([0-9][0-9,]*)`)
 	loopMileageRe    = regexp.MustCompile(`(?is)([0-9][0-9,]*)\s*(?:miles?|mi\b)`)
 	cssURLRe         = regexp.MustCompile(`url\((?:'([^']+)'|"([^"]+)"|([^'")]+))\)`)
+	priceAmountRe    = regexp.MustCompile(`\$\s*([0-9][0-9,]*(?:\.[0-9]{2})?)`)
 )
 
 func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -56,6 +57,11 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 		}
 		item.StockID = s.Find(site.ListPage.StockSelector).First().Text()
 		item.Price = s.Find(site.ListPage.PriceSelector).First().Text()
+		if strings.EqualFold(clean(item.Price), "today's price") || strings.EqualFold(clean(item.Price), "todays price") || !priceAmountRe.MatchString(item.Price) {
+			if p := extractBestPriceText(s.Text()); p != "" {
+				item.Price = p
+			}
+		}
 		item.Mileage = s.Find(site.ListPage.MileageSelector).First().Text()
 		if item.URL == "" {
 			item.URL = firstAttr(s, "meta[itemprop='url']", "content")
@@ -76,6 +82,19 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 		items = append(items, normalized)
 	})
 	return items, nil
+}
+
+func extractBestPriceText(cardText string) string {
+	matches := priceAmountRe.FindAllStringSubmatch(cardText, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	// Prefer the first amount shown in the card; for these dealer cards this maps to current/sale price.
+	amt := strings.TrimSpace(matches[0][1])
+	if amt == "" {
+		return ""
+	}
+	return "$" + amt
 }
 
 func chooseBestCardURL(card *goquery.Selection, selector string) string {
