@@ -151,6 +151,7 @@ type scrapedPageHTML struct {
 func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string) (string, error) {
 	var html string
 	var renderErr error
+	source := "none"
 
 	primary := s.Browser
 	secondary := s.AltBrowser
@@ -164,9 +165,13 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		h, err := b.Render(ctx, pageURL, site)
 		if err != nil {
 			renderErr = err
+			if s.Logger != nil {
+				s.Logger.Warn("browser render failed", zap.String("url", pageURL), zap.Error(err))
+			}
 			continue
 		}
 		html = h
+		source = "browser"
 		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
 			continue
 		}
@@ -185,17 +190,30 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				return err
 			}
 			html = h
+			source = "http_fetch"
 			return nil
 		})
 		if renderErr != nil && isTimeoutLikeErr(renderErr) && s.Browser != nil {
 			if h, err := s.Browser.Render(ctx, pageURL, site); err == nil {
 				html = h
 				renderErr = nil
+				source = "browser_retry"
 			}
 		}
 	}
 	if renderErr != nil {
 		return "", renderErr
+	}
+	if s.Logger != nil {
+		cardCount := 0
+		if site.ListPage.CardSelector != "" {
+			cardCount = countCards(html, site.ListPage.CardSelector)
+		}
+		s.Logger.Info("list html source",
+			zap.String("url", pageURL),
+			zap.String("source", source),
+			zap.Int("cardCount", cardCount),
+		)
 	}
 	return html, nil
 }
