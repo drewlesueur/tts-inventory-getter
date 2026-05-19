@@ -212,6 +212,9 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 	for idx < len(pages) && len(pages) < maxPages {
 		cur := pages[idx]
 		nextURLs := extractNextPageURLs(cur.url, cur.html, site)
+		if len(nextURLs) == 0 {
+			nextURLs = inferDealerSyncFallbackURLs(cur.url, cur.html, maxPages-len(pages))
+		}
 		for _, nextURL := range nextURLs {
 			if len(pages) >= maxPages {
 				break
@@ -393,6 +396,44 @@ func inferDealerSyncPageCount(html string) int {
 		return 1
 	}
 	return pages
+}
+
+func inferDealerSyncFallbackURLs(pageURL, html string, remaining int) []string {
+	if remaining <= 0 {
+		return nil
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return nil
+	}
+	model := doc.Find("#ds-inventory-model").First()
+	if model.Length() == 0 {
+		return nil
+	}
+	total := parsePositiveInt(model.AttrOr("data-results-total", "0"))
+	count := parsePositiveInt(model.AttrOr("data-results-count", "0"))
+	if total <= 0 || count <= 0 || total <= count {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	q := u.Query()
+	curPage := parsePositiveInt(q.Get("ai_page"))
+	totalPages := (total + count - 1) / count
+	if totalPages <= 1 {
+		return nil
+	}
+	out := make([]string, 0, remaining)
+	for p := curPage + 1; p < totalPages && len(out) < remaining; p++ {
+		next := *u
+		nq := next.Query()
+		nq.Set("ai_page", strconv.Itoa(p))
+		next.RawQuery = nq.Encode()
+		out = append(out, next.String())
+	}
+	return out
 }
 
 func parsePositiveInt(s string) int {
