@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -29,6 +30,8 @@ type Resolver struct {
 	Logger   *zap.Logger
 }
 
+const siteConfigCacheTTL = 7 * 24 * time.Hour
+
 func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (config.SiteConfig, error) {
 	sourceURL = strings.TrimSpace(sourceURL)
 	if sourceURL == "" {
@@ -36,7 +39,16 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 	}
 	urlKey := cacheKeyForSourceURL(sourceURL)
 	if site, err := r.Loader.LoadByName(urlKey); err == nil {
-		return site, nil
+		if r.Loader.IsCacheFresh(urlKey, siteConfigCacheTTL) {
+			return site, nil
+		}
+		if r.Logger != nil {
+			r.Logger.Info("site config cache expired, rediscovering",
+				zap.String("urlKey", urlKey),
+				zap.String("sourceURL", sourceURL),
+				zap.Duration("ttl", siteConfigCacheTTL),
+			)
+		}
 	}
 	if r.Discover == nil {
 		return config.SiteConfig{}, fmt.Errorf("site config not cached for url=%s and Codex discovery disabled", sourceURL)
@@ -100,4 +112,8 @@ func cacheKeyForSourceURL(sourceURL string) string {
 		path = "_root"
 	}
 	return "url::" + host + "/" + path
+}
+
+func CacheKeyForSourceURL(sourceURL string) string {
+	return cacheKeyForSourceURL(sourceURL)
 }

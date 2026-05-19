@@ -12,12 +12,13 @@ import (
 var multiSpace = regexp.MustCompile(`\s+`)
 var yearTitle = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
 var imageSizeHintRe = regexp.MustCompile(`-(\d+)x(\d+)\.(?:jpg|jpeg|png|webp)(?:[?#]|$)`)
+var stockTokenRe = regexp.MustCompile(`(?i)\bstock\s*#?[:\-]?\s*([a-z0-9\-]+)\b`)
 
 const minImageDimension = 300
 
 func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem {
 	item.Title = clean(item.Title)
-	item.StockID = clean(item.StockID)
+	item.StockID = normalizeStockID(item.StockID)
 	item.Price = clean(item.Price)
 	item.Mileage = clean(item.Mileage)
 	item.Engine = clean(item.Engine)
@@ -100,7 +101,7 @@ func isLikelyVehicleImageURL(raw string) bool {
 		}
 	}
 	noise := []string{
-		"/logo", "logo_", "seal", "icon-", "icon_", "favicon", "sprite", "placeholder",
+		"/logo", "logo_", "seal", "icon-", "icon_", "favicon", "sprite",
 		"dealerrater", "calendly", "/css/", "/js/", ".svg",
 	}
 	for _, n := range noise {
@@ -110,6 +111,7 @@ func isLikelyVehicleImageURL(raw string) bool {
 	}
 	positive := []string{
 		"vehicle", "inventory", "wp-content/uploads", "stock", "vin=",
+		"new-arrival", "new_arrival", "photos-coming-soon", "coming-soon", "picture-coming-soon", "no-photo",
 		".jpg", ".jpeg", ".png", ".webp",
 	}
 	for _, p := range positive {
@@ -131,4 +133,15 @@ func uniqueStrings(in []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func normalizeStockID(raw string) string {
+	s := clean(raw)
+	if s == "" {
+		return ""
+	}
+	if m := stockTokenRe.FindStringSubmatch(s); len(m) > 1 {
+		return strings.ToUpper(clean(m[1]))
+	}
+	return strings.ToUpper(s)
 }

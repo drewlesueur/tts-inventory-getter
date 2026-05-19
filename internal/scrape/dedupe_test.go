@@ -1,0 +1,56 @@
+package scrape
+
+import (
+	"testing"
+
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
+)
+
+func TestDedupe_MergesDuplicateItemsAndKeepsImage(t *testing.T) {
+	items := []model.InventoryItem{
+		{StockID: "C73921", Title: "2020 Ford F-150"},
+		{StockID: "C73921", PrimaryImage: "https://static.overfuel.com/dealers/ideal-cars/image/new_arrival_graphic_ideal_cars.webp?w=1920&q=80", Images: []string{"https://static.overfuel.com/dealers/ideal-cars/image/new_arrival_graphic_ideal_cars.webp?w=1920&q=80"}},
+	}
+	out := Dedupe(items)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(out))
+	}
+	if out[0].PrimaryImage == "" {
+		t.Fatalf("expected merged item to keep primary image")
+	}
+	if len(out[0].Images) == 0 {
+		t.Fatalf("expected merged item to keep image list")
+	}
+}
+
+func TestDedupe_PrefersStockKeyOverVINToMergeVariants(t *testing.T) {
+	items := []model.InventoryItem{
+		{
+			StockID:      "26027",
+			Title:        "2016 Acura MDX w/Advance",
+			URL:          "https://dealer.test/pre-owned-cars/detail/2016-Acura-MDX/1454461",
+			PrimaryImage: "https://images.dealersync.com/a.jpg?width=450",
+			Images:       []string{"https://images.dealersync.com/a.jpg?width=450"},
+		},
+		{
+			StockID: "26027",
+			VIN:     "5FRYD4H95GB010521",
+			URL:     "https://dealer.test/pre-owned-cars/detail/2016-Acura-MDX/1454461",
+			Images:  []string{"https://images.dealersync.com/a.jpg"},
+		},
+	}
+
+	out := Dedupe(items)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 unique item, got %d", len(out))
+	}
+	if out[0].StockID != "26027" {
+		t.Fatalf("expected stockId 26027, got %q", out[0].StockID)
+	}
+	if out[0].VIN != "5FRYD4H95GB010521" {
+		t.Fatalf("expected VIN merged, got %q", out[0].VIN)
+	}
+	if len(out[0].Images) < 2 {
+		t.Fatalf("expected merged images from both variants, got %d", len(out[0].Images))
+	}
+}

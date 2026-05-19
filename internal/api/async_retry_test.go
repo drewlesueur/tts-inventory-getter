@@ -61,7 +61,7 @@ func TestRunScrapeAsync_RetriesThenSuccess(t *testing.T) {
 	st := store.NewMemoryResultStore()
 	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
 
-	s.runScrapeAsync("r1", "d1", "https://dealer.test/inventory", "idem-1", testSiteConfig(), 10*time.Second)
+	s.runScrapeAsync("r1", "d1", "https://dealer.test/inventory", "idem-1", testSiteConfig(), 10*time.Second, nil)
 
 	r, err := st.GetResult(context.Background(), "r1")
 	if err != nil {
@@ -84,7 +84,7 @@ func TestRunScrapeAsync_ExhaustsRetries(t *testing.T) {
 	st := store.NewMemoryResultStore()
 	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
 
-	s.runScrapeAsync("r2", "d1", "https://dealer.test/inventory", "idem-2", testSiteConfig(), 5*time.Second)
+	s.runScrapeAsync("r2", "d1", "https://dealer.test/inventory", "idem-2", testSiteConfig(), 5*time.Second, nil)
 
 	r, err := st.GetResult(context.Background(), "r2")
 	if err != nil {
@@ -93,8 +93,8 @@ func TestRunScrapeAsync_ExhaustsRetries(t *testing.T) {
 	if r.AttemptCount != 3 {
 		t.Fatalf("expected attemptCount=3 got %d", r.AttemptCount)
 	}
-	if r.Status != "failed" {
-		t.Fatalf("expected failed got %s", r.Status)
+	if r.Status != "partial_success" {
+		t.Fatalf("expected partial_success got %s", r.Status)
 	}
 	if r.LastError == "" {
 		t.Fatalf("expected lastError to be set")
@@ -107,7 +107,7 @@ func TestRunScrapeAsync_NonRetryableFailure(t *testing.T) {
 	st := store.NewMemoryResultStore()
 	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
 
-	s.runScrapeAsync("r3", "d1", "https://dealer.test/inventory", "idem-3", testSiteConfig(), 5*time.Second)
+	s.runScrapeAsync("r3", "d1", "https://dealer.test/inventory", "idem-3", testSiteConfig(), 5*time.Second, nil)
 
 	r, err := st.GetResult(context.Background(), "r3")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestRunScrapeAsync_NonRetryableFailure(t *testing.T) {
 	if r.AttemptCount != 1 {
 		t.Fatalf("expected attemptCount=1 got %d", r.AttemptCount)
 	}
-	if r.Status != "failed" {
-		t.Fatalf("expected failed got %s", r.Status)
+	if r.Status != "partial_success" {
+		t.Fatalf("expected partial_success got %s", r.Status)
 	}
 }

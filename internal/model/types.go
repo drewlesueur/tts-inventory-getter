@@ -3,21 +3,27 @@ package model
 import "time"
 
 type InventoryItem struct {
-	StockID      string   `json:"stockId"`
-	URL          string   `json:"url"`
-	Title        string   `json:"title"`
-	Year         string   `json:"year,omitempty"`
-	Make         string   `json:"make,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Color        string   `json:"color,omitempty"`
-	VIN          string   `json:"vin,omitempty"`
-	PrimaryImage string   `json:"primaryImage,omitempty"`
-	Images       []string `json:"images,omitempty"`
-	Price        string   `json:"price,omitempty"`
-	Mileage      string   `json:"mileage,omitempty"`
-	Engine       string   `json:"engine,omitempty"`
-	Transmission string   `json:"transmission,omitempty"`
-	DriveType    string   `json:"driveType,omitempty"`
+	StockID          string   `json:"stockId"`
+	Stock            string   `json:"stock,omitempty"`
+	URL              string   `json:"url"`
+	Website          string   `json:"website,omitempty"`
+	DealerID         string   `json:"dealerId,omitempty"`
+	Title            string   `json:"title"`
+	Style            string   `json:"style,omitempty"`
+	Year             string   `json:"year,omitempty"`
+	Make             string   `json:"make,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	Color            string   `json:"color,omitempty"`
+	VIN              string   `json:"vin,omitempty"`
+	PrimaryImage     string   `json:"primaryImage,omitempty"`
+	Images           []string `json:"images,omitempty"`
+	PhotoURLs        []string `json:"photoURLs,omitempty"`
+	Price            string   `json:"price,omitempty"`
+	VehicleListPrice string   `json:"vehicleListPrice,omitempty"`
+	Mileage          string   `json:"mileage,omitempty"`
+	Engine           string   `json:"engine,omitempty"`
+	Transmission     string   `json:"transmission,omitempty"`
+	DriveType        string   `json:"driveType,omitempty"`
 }
 
 type RunStatus string

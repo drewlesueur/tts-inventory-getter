@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ var (
 	loopTitlePartsRe = regexp.MustCompile(`^\s*((?:19|20)\d{2})?\s*([A-Za-z0-9]+)?\s*(.*)$`)
 	loopPriceRe      = regexp.MustCompile(`(?is)\$\s*([0-9][0-9,]*)`)
 	loopMileageRe    = regexp.MustCompile(`(?is)([0-9][0-9,]*)\s*(?:miles?|mi\b)`)
+	cssURLRe         = regexp.MustCompile(`url\((?:'([^']+)'|"([^"]+)"|([^'")]+))\)`)
 )
 
 func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -45,19 +47,129 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 	doc.Find(site.ListPage.CardSelector).Each(func(_ int, s *goquery.Selection) {
 		item := model.InventoryItem{}
 		item.Title = s.Find(site.ListPage.TitleSelector).First().Text()
-		if href, ok := s.Find(site.ListPage.URLSelector).First().Attr("href"); ok {
+		if href := chooseBestCardURL(s, site.ListPage.URLSelector); href != "" {
 			item.URL = href
 		}
-		if img, ok := s.Find(site.ListPage.ImageSelector).First().Attr("src"); ok {
+		if img := pickCardImage(s, site.ListPage.ImageSelector); img != "" {
 			item.PrimaryImage = img
 			item.Images = []string{img}
 		}
 		item.StockID = s.Find(site.ListPage.StockSelector).First().Text()
 		item.Price = s.Find(site.ListPage.PriceSelector).First().Text()
 		item.Mileage = s.Find(site.ListPage.MileageSelector).First().Text()
-		items = append(items, NormalizeItem(pageURL, item))
+		if item.URL == "" {
+			item.URL = firstAttr(s, "meta[itemprop='url']", "content")
+		}
+		if item.Title == "" {
+			item.Title = firstAttr(s, "meta[itemprop='name']", "content")
+		}
+		if item.StockID == "" {
+			item.StockID = firstAttr(s, "meta[itemprop='sku']", "content")
+		}
+		if item.VIN == "" {
+			item.VIN = firstAttr(s, "meta[itemprop='vehicleIdentificationNumber']", "content")
+		}
+		normalized := NormalizeItem(pageURL, item)
+		if !looksLikeUsefulListing(normalized) {
+			return
+		}
+		items = append(items, normalized)
 	})
 	return items, nil
+}
+
+func chooseBestCardURL(card *goquery.Selection, selector string) string {
+	candidates := make([]string, 0, 8)
+	card.Find(selector).Each(func(_ int, s *goquery.Selection) {
+		if href, ok := s.Attr("href"); ok && strings.TrimSpace(href) != "" {
+			candidates = append(candidates, href)
+		}
+	})
+	best := ""
+	bestScore := -999
+	for _, href := range candidates {
+		score := scoreListingURL(href)
+		if score > bestScore {
+			bestScore = score
+			best = href
+		}
+	}
+	if bestScore < 0 {
+		return ""
+	}
+	return best
+}
+
+func scoreListingURL(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return -100
+	}
+	l := strings.ToLower(raw)
+	if strings.HasPrefix(l, "javascript:") || strings.HasPrefix(l, "mailto:") || strings.HasPrefix(l, "tel:") || l == "#" {
+		return -100
+	}
+	if strings.Contains(l, "google.com/maps") || strings.Contains(l, "api=1&destination=") {
+		return -100
+	}
+	score := 0
+	if strings.Contains(l, "/pre-owned-cars/detail/") || strings.Contains(l, "/vehicle-details/") || strings.Contains(l, "/inventory/") {
+		score += 10
+	}
+	if strings.HasPrefix(l, "/") {
+		score += 2
+	}
+	if u, err := url.Parse(l); err == nil && u.Host != "" {
+		if strings.Contains(u.Host, "google.") {
+			score -= 10
+		}
+	}
+	if strings.Contains(l, "compare") || strings.Contains(l, "schedule") || strings.Contains(l, "finance") || strings.Contains(l, "service") {
+		score -= 3
+	}
+	return score
+}
+
+func looksLikeUsefulListing(it model.InventoryItem) bool {
+	signals := 0
+	if it.Title != "" {
+		signals++
+	}
+	if it.StockID != "" {
+		signals++
+	}
+	if it.Price != "" {
+		signals++
+	}
+	if it.Mileage != "" {
+		signals++
+	}
+	if it.PrimaryImage != "" {
+		signals++
+	}
+	if it.VIN != "" {
+		signals++
+	}
+
+	urlScore := scoreListingURL(it.URL)
+	if urlScore >= 8 {
+		return true
+	}
+	if urlScore >= 3 && signals >= 2 {
+		return true
+	}
+	if it.StockID != "" && signals >= 2 {
+		return true
+	}
+	if it.Title != "" && (it.Price != "" || it.PrimaryImage != "") {
+		return true
+	}
+	return false
+}
+
+func firstAttr(s *goquery.Selection, selector, attr string) string {
+	v, _ := s.Find(selector).First().Attr(attr)
+	return strings.TrimSpace(v)
 }
 
 func (l LoopHTMLExtractor) Extract(_ context.Context, html, pageURL string, _ config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -400,4 +512,112 @@ func pickImageList(m map[string]any) []string {
 		}
 	}
 	return uniqueStrings(out)
+}
+
+func firstNonEmptyImageAttr(s *goquery.Selection) string {
+	keys := []string{"src", "data-src", "data-lazy-src", "data-original", "data-image", "data-srcset", "srcset"}
+	for _, k := range keys {
+		raw := strings.TrimSpace(s.AttrOr(k, ""))
+		if raw == "" {
+			continue
+		}
+		if k == "srcset" || k == "data-srcset" {
+			if u := firstFromSrcset(raw); u != "" {
+				return u
+			}
+			continue
+		}
+		return raw
+	}
+	return ""
+}
+
+func firstFromSrcset(raw string) string {
+	for _, part := range strings.Split(raw, ",") {
+		p := strings.Fields(strings.TrimSpace(part))
+		if len(p) == 0 {
+			continue
+		}
+		if p[0] != "" {
+			return p[0]
+		}
+	}
+	return ""
+}
+
+func pickCardImage(card *goquery.Selection, imgSelector string) string {
+	candidates := card.Find(imgSelector)
+	firstAny := ""
+	firstFromComingSoonAlt := ""
+	best := ""
+	candidates.EachWithBreak(func(_ int, img *goquery.Selection) bool {
+		src := firstNonEmptyImageAttr(img)
+		if src == "" {
+			return true
+		}
+		if firstAny == "" {
+			firstAny = src
+		}
+		alt := strings.ToLower(strings.TrimSpace(img.AttrOr("alt", "")))
+		if firstFromComingSoonAlt == "" && (strings.Contains(alt, "coming soon") || strings.Contains(alt, "new arrival")) {
+			firstFromComingSoonAlt = src
+		}
+		if isLikelyVehicleImageURL(src) {
+			best = src
+			return false
+		}
+		return true
+	})
+	if best != "" {
+		return best
+	}
+	if firstFromComingSoonAlt != "" {
+		return firstFromComingSoonAlt
+	}
+	if bg := firstBackgroundImageURL(card); bg != "" {
+		return bg
+	}
+	return firstAny
+}
+
+func firstBackgroundImageURL(card *goquery.Selection) string {
+	if u := urlFromStyle(card.AttrOr("style", "")); u != "" {
+		return u
+	}
+	attrs := []string{"data-bg", "data-background-image", "data-image", "data-src"}
+	for _, k := range attrs {
+		if v := strings.TrimSpace(card.AttrOr(k, "")); v != "" {
+			return v
+		}
+	}
+	var out string
+	card.Find("[style*='background-image'], [data-bg], [data-background-image], [data-image], [data-src]").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+		if u := urlFromStyle(s.AttrOr("style", "")); u != "" {
+			out = u
+			return false
+		}
+		for _, k := range attrs {
+			if v := strings.TrimSpace(s.AttrOr(k, "")); v != "" {
+				out = v
+				return false
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func urlFromStyle(style string) string {
+	style = strings.TrimSpace(style)
+	if style == "" {
+		return ""
+	}
+	if m := cssURLRe.FindStringSubmatch(style); len(m) > 2 {
+		for _, g := range m[1:] {
+			if strings.TrimSpace(g) != "" {
+				return strings.TrimSpace(g)
+			}
+		}
+	}
+	return ""
 }

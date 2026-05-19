@@ -48,16 +48,19 @@ func main() {
 	}
 	defer resultStore.Close()
 	httpFetcher := scrape.NewHTTPFetcherWithTimeout(time.Duration(cfg.HTTPFetchTimeoutSec) * time.Second)
-	browser, cancelBrowser := scrape.NewChromeBrowser(cfg.Headless)
-	defer cancelBrowser()
+	rodBrowser, cancelRod := scrape.NewRodBrowser(cfg.Headless)
+	defer cancelRod()
+	playwrightBrowser := scrape.NewPlaywrightBrowser(cfg.PlaywrightCommand)
 
 	imageSizes := scrape.NewImageSizeCache()
 	scraper := scrape.Service{
-		Browser:       browser,
+		Browser:       playwrightBrowser,
+		AltBrowser:    rodBrowser,
 		Fetcher:       httpFetcher,
-		DetailFetcher: scrape.HTMLDetailFetcher{Fetcher: httpFetcher, Browser: browser, ImageSizes: imageSizes},
+		DetailFetcher: scrape.HTMLDetailFetcher{Fetcher: httpFetcher, Browser: rodBrowser, ImageSizes: imageSizes},
 		Extractors:    []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
 		Concurrency:   cfg.Concurrency,
+		AIEnricher:    &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
 	}
 
 	m := metrics.New()
@@ -162,7 +165,11 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 
 		runCtx, runCancel := context.WithTimeout(context.Background(), cfg.DefaultRunTimeout())
 		started := time.Now().UTC()
-		res := scraper.ScrapeOnce(runCtx, p.URL, site)
+		res := scraper.ScrapeOnceWithOptions(runCtx, p.URL, site, scrape.Options{
+			DealershipID:       p.DealershipID,
+			SourceURL:          p.URL,
+			EnableAIEnrichment: scraper.AIEnricher != nil,
+		})
 		runCancel()
 
 		record := model.ScrapeResult{
@@ -178,12 +185,8 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			Items:        res.Items,
 			Errors:       res.Errors,
 		}
-		if len(res.Errors) > 0 && len(res.Items) > 0 {
+		if len(res.Errors) > 0 {
 			record.Status = model.RunStatusPartial
-		}
-		if len(res.Items) == 0 {
-			record.Status = model.RunStatusFailed
-			record.FailureReason = "cron no inventory"
 		}
 		if err := resultStore.UpsertResult(context.Background(), record); err != nil {
 			logger.Error("result store upsert failed", zap.String("resultId", record.ResultID), zap.Error(err))

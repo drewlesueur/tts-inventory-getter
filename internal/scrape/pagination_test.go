@@ -44,3 +44,36 @@ func TestScrapeOnce_UsesPaginationNextLinks(t *testing.T) {
 		t.Fatalf("expected 2 items from paginated pages got %d errs=%+v", len(res.Items), res.Errors)
 	}
 }
+
+func TestScrapeOnce_RespectsDetectedInventoryTotal(t *testing.T) {
+	page1 := `<html><body>
+<div class="inventory-summary">Showing 1-1 of 1 vehicles</div>
+<div class="vehicle-card"><a href="/vehicle-details/car-1/">Car 1</a><h2>2020 Audi A4</h2><span class="stock">S1</span><span class="price">$10</span><img src="https://dealer.test/vehicle-1.jpg"/></div>
+<a rel="next" href="/used-cars-in-mesa-az/page/2">Next</a>
+</body></html>`
+	page2 := `<html><body>
+<div class="vehicle-card"><a href="/vehicle-details/car-2/">Car 2</a><h2>2021 BMW 330i</h2><span class="stock">S2</span><span class="price">$20</span><img src="https://dealer.test/vehicle-2.jpg"/></div>
+</body></html>`
+
+	site := config.SiteConfig{}
+	site.ListPage.CardSelector = ".vehicle-card"
+	site.ListPage.TitleSelector = "h2"
+	site.ListPage.URLSelector = "a"
+	site.ListPage.StockSelector = ".stock"
+	site.ListPage.PriceSelector = ".price"
+	site.ListPage.ImageSelector = "img"
+	site.ListPage.TotalSelector = ".inventory-summary"
+	site.ListPage.Pagination.MaxPages = 3
+
+	svc := Service{
+		Fetcher:       pageFetcher{pages: map[string]string{"https://dealer.test/used-cars-in-mesa-az": page1, "https://dealer.test/used-cars-in-mesa-az/page/2": page2}},
+		DetailFetcher: HTMLDetailFetcher{Fetcher: pageFetcher{}},
+		Extractors:    []Extractor{DOMExtractor{}},
+		Concurrency:   1,
+	}
+
+	res := svc.ScrapeOnce(context.Background(), "https://dealer.test/used-cars-in-mesa-az", site)
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 item due to detected total cap got %d errs=%+v", len(res.Items), res.Errors)
+	}
+}

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
@@ -38,7 +41,17 @@ type proposal struct {
 		PriceSelector   string `json:"priceSelector"`
 		MileageSelector string `json:"mileageSelector"`
 		ImageSelector   string `json:"imageSelector"`
+		TotalSelector   string `json:"totalSelector"`
+		MaxItems        int    `json:"maxItems"`
 	} `json:"listPage"`
+	Pagination struct {
+		Type             string   `json:"type"`
+		NextSelector     string   `json:"nextSelector"`
+		LoadMoreSelector string   `json:"loadMoreSelector"`
+		InfiniteScroll   bool     `json:"infiniteScroll"`
+		ModeHint         string   `json:"modeHint"`
+		Hints            []string `json:"hints"`
+	} `json:"pagination"`
 	DetailPage struct {
 		ImageSelectors []string `json:"imageSelectors"`
 		VINSelector    string   `json:"vinSelector"`
@@ -47,6 +60,11 @@ type proposal struct {
 		Stock []string `json:"stock"`
 		VIN   []string `json:"vin"`
 	} `json:"regex"`
+	Discovery struct {
+		Confidence float64  `json:"confidence"`
+		Notes      string   `json:"notes"`
+		TotalHints []string `json:"totalHints"`
+	} `json:"discovery"`
 }
 
 func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.SiteConfig, error) {
@@ -64,13 +82,13 @@ func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.Si
 	}
 
 	html = truncate(html, 70000)
-	input := "Analyze this dealership inventory HTML and propose robust CSS selectors for listing cards and detail-image extraction. Return JSON only. URL: " + sourceURL + "\nHTML:\n" + html
+	input := "Analyze this dealership inventory HTML and propose robust CSS selectors for listing and detail extraction, including pagination and inventory-total hints. Class names can be arbitrary, so infer selectors from structure and repeated item patterns, not only obvious names. Return JSON only. URL: " + sourceURL + "\nHTML:\n" + html
 
 	payload := map[string]any{
 		"model": c.Model,
 		"input": []map[string]any{{
 			"role":    "system",
-			"content": []map[string]string{{"type": "input_text", "text": "You are an expert web scraper architect. Return only valid JSON."}},
+			"content": []map[string]string{{"type": "input_text", "text": "You are an expert web scraper architect. Return only valid JSON. Prioritize resilient selectors that work even with random class names."}},
 		}, {
 			"role":    "user",
 			"content": []map[string]string{{"type": "input_text", "text": input}},
@@ -113,13 +131,20 @@ func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.Si
 	}
 
 	site := config.SiteConfig{BaseURL: sourceURL}
-	site.ListPage.CardSelector = fallback(p.ListPage.CardSelector, ".vehicle-card, .inventory-item, [class*='vehicle']")
+	site.ListPage.CardSelector = fallback(p.ListPage.CardSelector, inferCardSelector(html))
 	site.ListPage.TitleSelector = fallback(p.ListPage.TitleSelector, "h2, h3")
 	site.ListPage.URLSelector = fallback(p.ListPage.URLSelector, "a")
-	site.ListPage.StockSelector = fallback(p.ListPage.StockSelector, ".stock, [class*='stock']")
+	site.ListPage.StockSelector = fallback(p.ListPage.StockSelector, "[data-stock], [data-stock-no], [itemprop='sku'], [class*='stock'], [id*='stock']")
 	site.ListPage.PriceSelector = fallback(p.ListPage.PriceSelector, ".price, [class*='price']")
 	site.ListPage.MileageSelector = fallback(p.ListPage.MileageSelector, ".mileage, [class*='mileage']")
 	site.ListPage.ImageSelector = fallback(p.ListPage.ImageSelector, "img")
+	site.ListPage.TotalSelector = strings.TrimSpace(p.ListPage.TotalSelector)
+	site.ListPage.MaxItems = p.ListPage.MaxItems
+	site.ListPage.Pagination.Type = strings.TrimSpace(p.Pagination.Type)
+	site.ListPage.Pagination.NextSelector = strings.TrimSpace(p.Pagination.NextSelector)
+	site.ListPage.Pagination.LoadMoreSelector = strings.TrimSpace(p.Pagination.LoadMoreSelector)
+	site.ListPage.Pagination.InfiniteScroll = p.Pagination.InfiniteScroll
+	site.ListPage.Pagination.ModeHint = strings.TrimSpace(p.Pagination.ModeHint)
 	site.DetailPage.ImageSelectors = p.DetailPage.ImageSelectors
 	if len(site.DetailPage.ImageSelectors) == 0 {
 		site.DetailPage.ImageSelectors = []string{".gallery img", "img[data-src]", "img[src*='vehicle']"}
@@ -133,6 +158,11 @@ func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.Si
 	if len(site.Regex.VIN) == 0 {
 		site.Regex.VIN = []string{`\\b([A-HJ-NPR-Z0-9]{17})\\b`}
 	}
+	site.Discovery.Confidence = p.Discovery.Confidence
+	site.Discovery.Notes = strings.TrimSpace(p.Discovery.Notes)
+	site.Discovery.TotalHints = append(site.Discovery.TotalHints, p.Discovery.TotalHints...)
+	site.Discovery.PagingHints = append(site.Discovery.PagingHints, p.Pagination.Hints...)
+	site.Discovery.DiscoveredAt = time.Now().UTC().Format(time.RFC3339)
 
 	return site, nil
 }
@@ -160,4 +190,82 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+var validClassToken = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]*$`)
+
+func inferCardSelector(html string) string {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return ".inventory-item, article, li"
+	}
+	preferred := []string{
+		"[data-listing-id]",
+		"[data-vehicle-id]",
+		"[itemtype*='Vehicle']",
+		".inventory-item",
+		".vehicle-card",
+		"article",
+		"li",
+	}
+	for _, sel := range preferred {
+		nodes := doc.Find(sel)
+		if nodes.Length() >= 2 && hasAnchorDensity(nodes) {
+			return sel
+		}
+	}
+
+	classCount := map[string]int{}
+	doc.Find("div,article,li,section").Each(func(_ int, s *goquery.Selection) {
+		if s.Find("a[href]").Length() == 0 {
+			return
+		}
+		cls, ok := s.Attr("class")
+		if !ok {
+			return
+		}
+		for _, token := range strings.Fields(cls) {
+			if !validClassToken.MatchString(token) {
+				continue
+			}
+			classCount[token]++
+		}
+	})
+	type kv struct {
+		k string
+		v int
+	}
+	top := make([]kv, 0, len(classCount))
+	for k, v := range classCount {
+		if v >= 3 {
+			top = append(top, kv{k: k, v: v})
+		}
+	}
+	sort.Slice(top, func(i, j int) bool { return top[i].v > top[j].v })
+	if len(top) > 0 {
+		limit := 2
+		if len(top) < limit {
+			limit = len(top)
+		}
+		out := make([]string, 0, limit)
+		for i := 0; i < limit; i++ {
+			out = append(out, "."+top[i].k)
+		}
+		return strings.Join(out, ", ")
+	}
+	return ".inventory-item, article, li"
+}
+
+func hasAnchorDensity(nodes *goquery.Selection) bool {
+	total := nodes.Length()
+	if total == 0 {
+		return false
+	}
+	withAnchor := 0
+	nodes.Each(func(_ int, s *goquery.Selection) {
+		if s.Find("a[href]").Length() > 0 {
+			withAnchor++
+		}
+	})
+	return withAnchor >= 2 && withAnchor*2 >= total
 }

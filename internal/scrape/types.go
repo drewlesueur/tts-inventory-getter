@@ -8,8 +8,12 @@ import (
 )
 
 type Options struct {
-	RunTimeoutSec int  `json:"runTimeoutSec,omitempty"`
-	UseBrowser    *bool `json:"useBrowser,omitempty"`
+	RunTimeoutSec      int    `json:"runTimeoutSec,omitempty"`
+	UseBrowser         *bool  `json:"useBrowser,omitempty"`
+	BrowserStrategy    string `json:"browserStrategy,omitempty"`
+	EnableAIEnrichment bool   `json:"enableAIEnrichment,omitempty"`
+	DealershipID       string `json:"dealershipId,omitempty"`
+	SourceURL          string `json:"sourceUrl,omitempty"`
 }
 
 type Browser interface {

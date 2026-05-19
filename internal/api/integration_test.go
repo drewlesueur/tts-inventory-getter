@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 	"github.com/drewlesueur/tts-inventory-getter/internal/scrape"
+	"github.com/drewlesueur/tts-inventory-getter/internal/sites"
 	"github.com/drewlesueur/tts-inventory-getter/internal/store"
 )
 
@@ -22,6 +24,65 @@ type fixtureFetcher struct {
 	list string
 	d1   string
 	d2   string
+}
+
+func TestSiteConfigCacheDeleteBySourceURL(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	dir := t.TempDir()
+	loader := config.NewLoader(dir)
+	key := sites.CacheKeyForSourceURL("https://www.idealcarsaz.com/used-cars-in-mesa-az/")
+	if err := loader.SaveByName(key, config.SiteConfig{
+		Name:    key,
+		BaseURL: "https://www.idealcarsaz.com/used-cars-in-mesa-az/",
+		ListPage: config.ListPageConfig{
+			CardSelector: ".vehicle-card",
+		},
+	}); err != nil {
+		t.Fatalf("seed cache save failed: %v", err)
+	}
+
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/site-config-cache?sourceUrl=https://www.idealcarsaz.com/used-cars-in-mesa-az/", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+
+	cachePath := filepath.Join(dir, "urlkey_dXJsOjp3d3cuaWRlYWxjYXJzYXouY29tL3VzZWQtY2Fycy1pbi1tZXNhLWF6.yaml")
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Fatalf("expected cache file deleted, stat err=%v", err)
+	}
+}
+
+func TestSiteConfigCacheClearAll(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	dir := t.TempDir()
+	loader := config.NewLoader(dir)
+	_ = loader.SaveByName("url::a.test/inventory", config.SiteConfig{Name: "url::a.test/inventory", BaseURL: "https://a.test/inventory", ListPage: config.ListPageConfig{CardSelector: ".vehicle-card"}})
+	_ = loader.SaveByName("url::b.test/inventory", config.SiteConfig{Name: "url::b.test/inventory", BaseURL: "https://b.test/inventory", ListPage: config.ListPageConfig{CardSelector: ".vehicle-card"}})
+
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/site-config-cache?all=true", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir failed: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected no cache files after clear-all, got %d", len(files))
+	}
 }
 
 func (f fixtureFetcher) Fetch(_ context.Context, url string) (string, error) {
@@ -110,5 +171,36 @@ func TestScrapeOnceEndpoint_IdempotencyDoesNotReuseAcrossDifferentSourceURL(t *t
 	}
 	if bytes.Contains(w.Body.Bytes(), []byte("existing-result")) {
 		t.Fatalf("expected not to reuse previous result for different sourceUrl: %s", w.Body.String())
+	}
+}
+
+func TestApplyCrawlLimits_UsesDefaultsAndOverrides(t *testing.T) {
+	srv := NewServer(config.Config{
+		DefaultMaxPages:          20,
+		DefaultMaxScrollAttempts: 8,
+		DefaultMaxLoadMoreClicks: 20,
+		DefaultMaxItems:          200,
+	}, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+
+	site := config.SiteConfig{}
+	site.ListPage.CardSelector = ".vehicle-card"
+	site = srv.applyCrawlLimits(site, &ScrapeOptions{
+		MaxPages:          5,
+		MaxScrollAttempts: 3,
+		MaxLoadMoreClicks: 9,
+		MaxItems:          50,
+	})
+
+	if site.ListPage.Pagination.MaxPages != 5 {
+		t.Fatalf("expected maxPages override to apply, got %d", site.ListPage.Pagination.MaxPages)
+	}
+	if site.ListPage.Pagination.ScrollMaxAttempts != 3 {
+		t.Fatalf("expected maxScrollAttempts override to apply, got %d", site.ListPage.Pagination.ScrollMaxAttempts)
+	}
+	if site.ListPage.Pagination.ClickMaxAttempts != 9 {
+		t.Fatalf("expected maxLoadMoreClicks override to apply, got %d", site.ListPage.Pagination.ClickMaxAttempts)
+	}
+	if site.ListPage.MaxItems != 50 {
+		t.Fatalf("expected maxItems override to apply, got %d", site.ListPage.MaxItems)
 	}
 }

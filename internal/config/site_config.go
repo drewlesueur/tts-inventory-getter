@@ -7,16 +7,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type SiteConfig struct {
-	Name       string           `yaml:"name" json:"name"`
-	BaseURL    string           `yaml:"baseUrl" json:"baseUrl"`
-	ListPage   ListPageConfig   `yaml:"listPage" json:"listPage"`
-	DetailPage DetailPageConfig `yaml:"detailPage" json:"detailPage"`
-	Regex      RegexConfig      `yaml:"regex" json:"regex"`
+	Name       string            `yaml:"name" json:"name"`
+	BaseURL    string            `yaml:"baseUrl" json:"baseUrl"`
+	ListPage   ListPageConfig    `yaml:"listPage" json:"listPage"`
+	DetailPage DetailPageConfig  `yaml:"detailPage" json:"detailPage"`
+	Regex      RegexConfig       `yaml:"regex" json:"regex"`
+	Discovery  DiscoveryMetadata `yaml:"discovery,omitempty" json:"discovery,omitempty"`
 }
 
 type ListPageConfig struct {
@@ -28,25 +30,39 @@ type ListPageConfig struct {
 	PriceSelector   string           `yaml:"priceSelector" json:"priceSelector"`
 	MileageSelector string           `yaml:"mileageSelector" json:"mileageSelector"`
 	ImageSelector   string           `yaml:"imageSelector" json:"imageSelector"`
+	TotalSelector   string           `yaml:"totalSelector" json:"totalSelector"`
+	MaxItems        int              `yaml:"maxItems,omitempty" json:"maxItems,omitempty"`
 	Pagination      PaginationConfig `yaml:"pagination" json:"pagination"`
 }
 
 type PaginationConfig struct {
 	Type              string `yaml:"type" json:"type"`
 	NextSelector      string `yaml:"nextSelector" json:"nextSelector"`
+	LoadMoreSelector  string `yaml:"loadMoreSelector" json:"loadMoreSelector"`
 	MaxPages          int    `yaml:"maxPages" json:"maxPages"`
 	InfiniteScroll    bool   `yaml:"infiniteScroll" json:"infiniteScroll"`
 	ScrollMaxAttempts int    `yaml:"scrollMaxAttempts" json:"scrollMaxAttempts"`
+	ClickMaxAttempts  int    `yaml:"clickMaxAttempts" json:"clickMaxAttempts"`
+	ModeHint          string `yaml:"modeHint,omitempty" json:"modeHint,omitempty"`
 }
 
 type DetailPageConfig struct {
 	ImageSelectors []string `yaml:"imageSelectors" json:"imageSelectors"`
 	VINSelector    string   `yaml:"vinSelector" json:"vinSelector"`
+	StockSelector  string   `yaml:"stockSelector" json:"stockSelector"`
 }
 
 type RegexConfig struct {
 	Stock []string `yaml:"stock" json:"stock"`
 	VIN   []string `yaml:"vin" json:"vin"`
+}
+
+type DiscoveryMetadata struct {
+	Confidence   float64  `yaml:"confidence,omitempty" json:"confidence,omitempty"`
+	Notes        string   `yaml:"notes,omitempty" json:"notes,omitempty"`
+	TotalHints   []string `yaml:"totalHints,omitempty" json:"totalHints,omitempty"`
+	PagingHints  []string `yaml:"pagingHints,omitempty" json:"pagingHints,omitempty"`
+	DiscoveredAt string   `yaml:"discoveredAt,omitempty" json:"discoveredAt,omitempty"`
 }
 
 type Loader struct {
@@ -121,6 +137,9 @@ func (l Loader) LoadByPath(path string) (SiteConfig, error) {
 	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 {
 		cfg.ListPage.Pagination.ScrollMaxAttempts = 8
 	}
+	if cfg.ListPage.Pagination.ClickMaxAttempts == 0 {
+		cfg.ListPage.Pagination.ClickMaxAttempts = 20
+	}
 	return cfg, nil
 }
 
@@ -153,6 +172,75 @@ func (l Loader) SaveByName(name string, cfg SiteConfig) error {
 	}
 	l.Cache(name, cfg)
 	return nil
+}
+
+func (l Loader) DeleteByName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if l.cache != nil {
+		l.cache.mu.Lock()
+		delete(l.cache.m, name)
+		l.cache.mu.Unlock()
+	}
+	if l.Dir == "" {
+		return nil
+	}
+	p := filepath.Join(l.Dir, encodeCacheFilename(name)+".yaml")
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (l Loader) ClearCacheFiles() error {
+	if l.cache != nil {
+		l.cache.mu.Lock()
+		l.cache.m = map[string]SiteConfig{}
+		l.cache.mu.Unlock()
+	}
+	if l.Dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(l.Dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(l.Dir, e.Name())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l Loader) IsCacheFresh(name string, maxAge time.Duration) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	if maxAge <= 0 {
+		return true
+	}
+	if l.Dir == "" {
+		return true
+	}
+	p := filepath.Join(l.Dir, encodeCacheFilename(name)+".yaml")
+	fi, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	return time.Since(fi.ModTime()) <= maxAge
 }
 
 func encodeCacheFilename(key string) string {

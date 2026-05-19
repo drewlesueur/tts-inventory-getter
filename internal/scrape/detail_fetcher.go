@@ -46,10 +46,7 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 			if !imgAttrSizeOK(s) {
 				return
 			}
-			if src, ok := s.Attr("src"); ok && src != "" && isLikelyVehicleImageURL(src) {
-				imgSet[src] = struct{}{}
-			}
-			if src, ok := s.Attr("data-src"); ok && src != "" && isLikelyVehicleImageURL(src) {
+			if src := firstNonEmptyImageAttr(s); src != "" && isLikelyVehicleImageURL(src) {
 				imgSet[src] = struct{}{}
 			}
 		})
@@ -69,6 +66,9 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 	}
 	if site.DetailPage.VINSelector != "" && item.VIN == "" {
 		item.VIN = doc.Find(site.DetailPage.VINSelector).First().Text()
+	}
+	if site.DetailPage.StockSelector != "" && item.StockID == "" {
+		item.StockID = doc.Find(site.DetailPage.StockSelector).First().Text()
 	}
 	if item.VIN == "" {
 		doc.Find("li, div, tr, p, span, dt, dd").EachWithBreak(func(_ int, s *goquery.Selection) bool {
@@ -114,6 +114,48 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 			}
 		}
 	}
+	if item.StockID == "" {
+		doc.Find("li, div, tr, p, span, dt, dd").EachWithBreak(func(_ int, s *goquery.Selection) bool {
+			label := strings.ToUpper(clean(s.Text()))
+			if label == "STOCK" || strings.Contains(label, "STOCK #") || strings.Contains(label, "STOCK:") {
+				candidate := clean(s.Parent().Text())
+				if candidate == "" {
+					candidate = clean(s.Next().Text())
+				}
+				if m := findStockIDInText(candidate); m != "" {
+					item.StockID = m
+					return false
+				}
+				s.NextAll().EachWithBreak(func(_ int, sib *goquery.Selection) bool {
+					if m := findStockIDInText(clean(sib.Text())); m != "" {
+						item.StockID = m
+						return false
+					}
+					return true
+				})
+				if item.StockID != "" {
+					return false
+				}
+			}
+			return true
+		})
+	}
+	if item.StockID == "" {
+		patterns := site.Regex.Stock
+		if len(patterns) == 0 {
+			patterns = []string{`(?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)`}
+		}
+		for _, pat := range patterns {
+			re, err := regexp.Compile(pat)
+			if err != nil {
+				continue
+			}
+			if m := re.FindStringSubmatch(html); len(m) > 1 {
+				item.StockID = m[1]
+				break
+			}
+		}
+	}
 	fillCommonVehicleFields(&item, doc, html)
 	return NormalizeItem(item.URL, item), nil
 }
@@ -121,6 +163,14 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 func findVINInText(text string) string {
 	re := regexp.MustCompile(`\b([A-HJ-NPR-Z0-9]{17})\b`)
 	if m := re.FindStringSubmatch(strings.ToUpper(text)); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func findStockIDInText(text string) string {
+	re := regexp.MustCompile(`(?i)\bstock\s*#?[:\-]?\s*([a-z0-9\-]+)\b`)
+	if m := re.FindStringSubmatch(strings.TrimSpace(text)); len(m) > 1 {
 		return m[1]
 	}
 	return ""

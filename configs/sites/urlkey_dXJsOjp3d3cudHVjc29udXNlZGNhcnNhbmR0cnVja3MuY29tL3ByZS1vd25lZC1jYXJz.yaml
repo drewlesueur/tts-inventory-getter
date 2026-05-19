@@ -1,0 +1,35 @@
+name: url::www.tucsonusedcarsandtrucks.com/pre-owned-cars
+baseUrl: https://www.tucsonusedcarsandtrucks.com/pre-owned-cars
+listPage:
+    waitSelectors:
+        - .ds-vehicle-list-item, .srp-card, [class*='vehicle'][class*='item'], a[href*='/pre-owned-cars/detail/']
+    cardSelector: .ds-vehicle-list-item, .srp-card, .vehicle-card, [class*='vehicle'][class*='item'], [class*='inventory'][class*='item']
+    titleSelector: h1, h2, h3, h4, [itemprop='name']
+    urlSelector: a[href*='/pre-owned-cars/detail/'], a[href*='/vehicle-details/'], a[href*='/inventory/']
+    stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
+    priceSelector: .price, [class*='price'], [class*='payment'], [class*='internet-price']
+    mileageSelector: .mileage, [class*='mileage']
+    imageSelector: img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 0
+        infiniteScroll: true
+        scrollMaxAttempts: 25
+        clickMaxAttempts: 30
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src]
+        - img[src*='vehicle']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)
+    vin:
+        - \\b([A-HJ-NPR-Z0-9]{17})\\b
+discovery:
+    discoveredAt: "2026-05-20T00:20:00+05:45"

@@ -49,6 +49,7 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("POST /v1/scrape/once", s.handleScrapeOnce)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
+	v1.HandleFunc("DELETE /v1/site-config-cache", s.handleClearSiteConfigCache)
 	v1.HandleFunc("POST /v1/scrape/discover-flow", s.handleDiscover)
 
 	protected := chain(v1,
@@ -86,6 +87,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
 		return
 	}
+	site = s.applyCrawlLimits(site, req.Options)
 
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
@@ -100,11 +102,42 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout, req.Options)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
 }
 
-func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKey string, site config.SiteConfig, timeout time.Duration) {
+func (s *Server) applyCrawlLimits(site config.SiteConfig, opts *ScrapeOptions) config.SiteConfig {
+	if site.ListPage.Pagination.MaxPages <= 0 {
+		site.ListPage.Pagination.MaxPages = s.cfg.DefaultMaxPages
+	}
+	if site.ListPage.Pagination.ScrollMaxAttempts <= 0 {
+		site.ListPage.Pagination.ScrollMaxAttempts = s.cfg.DefaultMaxScrollAttempts
+	}
+	if site.ListPage.Pagination.ClickMaxAttempts <= 0 {
+		site.ListPage.Pagination.ClickMaxAttempts = s.cfg.DefaultMaxLoadMoreClicks
+	}
+	if site.ListPage.MaxItems <= 0 {
+		site.ListPage.MaxItems = s.cfg.DefaultMaxItems
+	}
+	if opts == nil {
+		return site
+	}
+	if opts.MaxPages > 0 {
+		site.ListPage.Pagination.MaxPages = opts.MaxPages
+	}
+	if opts.MaxScrollAttempts > 0 {
+		site.ListPage.Pagination.ScrollMaxAttempts = opts.MaxScrollAttempts
+	}
+	if opts.MaxLoadMoreClicks > 0 {
+		site.ListPage.Pagination.ClickMaxAttempts = opts.MaxLoadMoreClicks
+	}
+	if opts.MaxItems > 0 {
+		site.ListPage.MaxItems = opts.MaxItems
+	}
+	return site
+}
+
+func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKey string, site config.SiteConfig, timeout time.Duration, opts *ScrapeOptions) {
 	maxAttempts := s.cfg.ScrapeMaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -118,7 +151,24 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		start := time.Now().UTC()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		result := s.scraper.ScrapeOnce(ctx, sourceURL, site)
+		scrapeOpts := scrape.Options{
+			DealershipID:    dealershipID,
+			SourceURL:       sourceURL,
+			BrowserStrategy: "rod_first",
+		}
+		if opts != nil {
+			if strings.TrimSpace(opts.BrowserStrategy) != "" {
+				scrapeOpts.BrowserStrategy = opts.BrowserStrategy
+			}
+			if opts.EnableAIEnrichment != nil {
+				scrapeOpts.EnableAIEnrichment = *opts.EnableAIEnrichment
+			} else {
+				scrapeOpts.EnableAIEnrichment = s.scraper.AIEnricher != nil
+			}
+		} else {
+			scrapeOpts.EnableAIEnrichment = s.scraper.AIEnricher != nil
+		}
+		result := s.scraper.ScrapeOnceWithOptions(ctx, sourceURL, site, scrapeOpts)
 		cancel()
 		finalDur = time.Since(start).Seconds()
 
@@ -139,12 +189,8 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			Errors:         result.Errors,
 			IsRetrying:     false,
 		}
-		if len(result.Errors) > 0 && len(result.Items) > 0 {
+		if len(result.Errors) > 0 {
 			record.Status = model.RunStatusPartial
-		}
-		if len(result.Items) == 0 {
-			record.Status = model.RunStatusFailed
-			record.FailureReason = "no inventory extracted"
 		}
 		record.LastError = firstErrorMessage(result.Errors)
 		finalRecord = record
@@ -230,6 +276,32 @@ func (s *Server) handleClearResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "results cleared"})
+}
+
+func (s *Server) handleClearSiteConfigCache(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sourceURL := strings.TrimSpace(q.Get("sourceUrl"))
+	clearAll := strings.EqualFold(strings.TrimSpace(q.Get("all")), "true")
+
+	if clearAll {
+		if err := s.sites.ClearCacheFiles(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("SITE_CONFIG_CACHE_CLEAR_FAILED", err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "site config cache cleared"})
+		return
+	}
+
+	if sourceURL == "" || !validURL(sourceURL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid sourceUrl is required, or set all=true"))
+		return
+	}
+	key := sites.CacheKeyForSourceURL(sourceURL)
+	if err := s.sites.DeleteByName(key); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("SITE_CONFIG_CACHE_DELETE_FAILED", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "site config cache deleted", "urlKey": key})
 }
 
 func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {

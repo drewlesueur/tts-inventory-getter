@@ -11,9 +11,15 @@ type ScrapeOnceRequest struct {
 }
 
 type ScrapeOptions struct {
-	RunTimeoutSec     int   `json:"runTimeoutSec,omitempty"`
-	UseBrowser        *bool `json:"useBrowser,omitempty"`
-	UseCodexDiscovery *bool `json:"useCodexDiscovery,omitempty"`
+	RunTimeoutSec      int    `json:"runTimeoutSec,omitempty"`
+	UseBrowser         *bool  `json:"useBrowser,omitempty"`
+	UseCodexDiscovery  *bool  `json:"useCodexDiscovery,omitempty"`
+	BrowserStrategy    string `json:"browserStrategy,omitempty"`
+	EnableAIEnrichment *bool  `json:"enableAIEnrichment,omitempty"`
+	MaxPages           int    `json:"maxPages,omitempty"`
+	MaxScrollAttempts  int    `json:"maxScrollAttempts,omitempty"`
+	MaxLoadMoreClicks  int    `json:"maxLoadMoreClicks,omitempty"`
+	MaxItems           int    `json:"maxItems,omitempty"`
 }
 
 type DiscoverFlowRequest struct {

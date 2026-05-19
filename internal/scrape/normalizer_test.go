@@ -20,3 +20,11 @@ func TestDedupe(t *testing.T) {
 	out := Dedupe(items)
 	if len(out) != 2 { t.Fatalf("expected 2 got %d", len(out)) }
 }
+
+func TestNormalizeItem_NormalizesStockIDLabel(t *testing.T) {
+	in := model.InventoryItem{StockID: " Stock # 26027 "}
+	out := NormalizeItem("https://dealer.test", in)
+	if out.StockID != "26027" {
+		t.Fatalf("expected stock 26027 got %q", out.StockID)
+	}
+}

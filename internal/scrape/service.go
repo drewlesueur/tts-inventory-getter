@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +17,12 @@ import (
 
 type Service struct {
 	Browser       Browser
+	AltBrowser    Browser
 	Fetcher       Fetcher
 	DetailFetcher DetailFetcher
 	Extractors    []Extractor
 	Concurrency   int
+	AIEnricher    *AIEnricher
 }
 
 type unsafeFetcher interface {
@@ -26,11 +30,17 @@ type unsafeFetcher interface {
 }
 
 func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.SiteConfig) RunResult {
-	firstHTML, renderErr := s.fetchListHTML(ctx, sourceURL, site)
+	return s.ScrapeOnceWithOptions(ctx, sourceURL, site, Options{})
+}
+
+func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
+	firstHTML, renderErr := s.fetchListHTML(ctx, sourceURL, site, opts.BrowserStrategy)
 	if renderErr != nil {
 		return RunResult{Errors: []model.StructuredError{{Code: "SCRAPE_RENDER_FAILED", Message: renderErr.Error()}}}
 	}
-	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site)
+	detectedTotal := detectInventoryTotal(firstHTML, site)
+	effectiveMaxItems := effectiveMaxItems(site.ListPage.MaxItems, detectedTotal)
+	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy)
 
 	allItems := make([]model.InventoryItem, 0)
 	errs := make([]model.StructuredError, 0, len(pageErrs))
@@ -50,9 +60,14 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 			allItems = append(allItems, items...)
 			errs = append(errs, e...)
 		}
+		if effectiveMaxItems > 0 && len(allItems) >= effectiveMaxItems {
+			allItems = allItems[:effectiveMaxItems]
+			break
+		}
 	}
 	for i := range allItems {
 		allItems[i] = NormalizeItem(sourceURL, allItems[i])
+		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
 	}
 	allItems = Dedupe(allItems)
 	if len(allItems) > 0 {
@@ -73,7 +88,7 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 		if allItems[idx].URL == "" {
 			continue
 		}
-		if len(site.DetailPage.ImageSelectors) == 0 && site.DetailPage.VINSelector == "" {
+		if len(site.DetailPage.ImageSelectors) == 0 && site.DetailPage.VINSelector == "" && site.DetailPage.StockSelector == "" {
 			break
 		}
 		sem <- struct{}{}
@@ -94,6 +109,22 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 		}(idx)
 	}
 	wg.Wait()
+	for i := range allItems {
+		allItems[i] = NormalizeItem(sourceURL, allItems[i])
+		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
+	}
+	allItems = Dedupe(allItems)
+
+	if opts.EnableAIEnrichment && s.AIEnricher != nil {
+		for i := range allItems {
+			enriched, err := s.AIEnricher.Enrich(ctx, allItems[i], sourceURL)
+			if err != nil {
+				continue
+			}
+			allItems[i] = applyItemAliases(NormalizeItem(sourceURL, enriched), opts.DealershipID, opts.SourceURL)
+		}
+		allItems = Dedupe(allItems)
+	}
 
 	if len(allItems) == 0 {
 		errs = append(errs, model.StructuredError{Code: "NO_ITEMS", Message: fmt.Sprintf("no inventory found for %s", sourceURL)})
@@ -106,17 +137,29 @@ type scrapedPageHTML struct {
 	html string
 }
 
-func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig) (string, error) {
+func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string) (string, error) {
 	var html string
 	var renderErr error
 
-	if s.Browser != nil {
-		h, err := s.Browser.Render(ctx, pageURL, site)
-		if err == nil {
-			html = h
-		} else {
-			renderErr = err
+	primary := s.Browser
+	secondary := s.AltBrowser
+	if strings.EqualFold(strings.TrimSpace(strategy), "rod_first") {
+		primary, secondary = secondary, primary
+	}
+	for _, b := range []Browser{primary, secondary} {
+		if b == nil {
+			continue
 		}
+		h, err := b.Render(ctx, pageURL, site)
+		if err != nil {
+			renderErr = err
+			continue
+		}
+		html = h
+		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
+			continue
+		}
+		break
 	}
 	if html == "" {
 		renderErr = Retry(ctx, 1, func() error {
@@ -140,7 +183,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	return html, nil
 }
 
-func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML string, site config.SiteConfig) ([]scrapedPageHTML, []model.StructuredError) {
+func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML string, site config.SiteConfig, maxItems int, strategy string) ([]scrapedPageHTML, []model.StructuredError) {
 	maxPages := site.ListPage.Pagination.MaxPages
 	if maxPages <= 0 {
 		maxPages = 20
@@ -163,7 +206,7 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 				continue
 			}
 			seen[nextURL] = struct{}{}
-			h, err := s.fetchListHTML(ctx, nextURL, site)
+			h, err := s.fetchListHTML(ctx, nextURL, site, strategy)
 			if err != nil {
 				errs = append(errs, model.StructuredError{Code: "PAGINATION_FETCH_FAILED", Message: err.Error(), ItemURL: nextURL})
 				continue
@@ -175,6 +218,64 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 	return pages, errs
 }
 
+func countCards(html, selector string) int {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return 0
+	}
+	return doc.Find(selector).Length()
+}
+
+func effectiveMaxItems(configMax, detectedTotal int) int {
+	switch {
+	case configMax > 0 && detectedTotal > 0:
+		if detectedTotal < configMax {
+			return detectedTotal
+		}
+		return configMax
+	case configMax > 0:
+		return configMax
+	case detectedTotal > 0:
+		return detectedTotal
+	default:
+		return 0
+	}
+}
+
+var inventoryTotalTextRe = regexp.MustCompile(`(?i)(?:showing\s+\d+\s*[-–]\s*\d+\s+of|of|total)\s*([0-9][0-9,]{0,8})\s*(?:vehicles?|cars?|results?|inventory)?`)
+
+func detectInventoryTotal(html string, site config.SiteConfig) int {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return 0
+	}
+	if site.ListPage.TotalSelector != "" {
+		if n := parseTotalText(doc.Find(site.ListPage.TotalSelector).First().Text()); n > 0 {
+			return n
+		}
+	}
+	for _, sel := range site.Discovery.TotalHints {
+		if n := parseTotalText(doc.Find(sel).First().Text()); n > 0 {
+			return n
+		}
+	}
+	if n := parseTotalText(doc.Text()); n > 0 {
+		return n
+	}
+	if n := parsePositiveInt(doc.Find("#ds-inventory-model").First().AttrOr("data-results-total", "0")); n > 0 {
+		return n
+	}
+	return 0
+}
+
+func parseTotalText(text string) int {
+	m := inventoryTotalTextRe.FindStringSubmatch(text)
+	if len(m) < 2 {
+		return 0
+	}
+	return parsePositiveInt(strings.ReplaceAll(m[1], ",", ""))
+}
+
 func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
@@ -184,7 +285,18 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 	if site.ListPage.Pagination.NextSelector != "" {
 		selectors = append(selectors, site.ListPage.Pagination.NextSelector)
 	}
-	selectors = append(selectors, "link[rel='next']", "a[rel='next']", "a[aria-label='Next']", "a[aria-label='next']")
+	selectors = append(selectors,
+		"link[rel='next']",
+		"a[rel='next']",
+		"a[aria-label='Next']",
+		"a[aria-label='next']",
+		"nav[class*='pagination'] a[href]",
+		"ul[class*='pagination'] a[href]",
+		"ul[class*='page'] a[href]",
+		"a[class*='next'][href]",
+		"a[href*='/page/']",
+		"a[href*='page=']",
+	)
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 4)
 	for _, sel := range selectors {
@@ -203,11 +315,68 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 			if !sameHost(pageURL, abs) {
 				return
 			}
+			// keep only likely inventory/pagination links; avoid category/filter and media links
+			if !looksLikePaginationOrInventoryURL(abs) {
+				return
+			}
 			seen[abs] = struct{}{}
 			out = append(out, abs)
 		})
 	}
+	for _, next := range extractDealerSyncPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	return out
+}
+
+func extractDealerSyncPageURLs(pageURL string, doc *goquery.Document) []string {
+	model := doc.Find("#ds-inventory-model").First()
+	if model.Length() == 0 {
+		return nil
+	}
+	total := parsePositiveInt(model.AttrOr("data-results-total", "0"))
+	count := parsePositiveInt(model.AttrOr("data-results-count", "0"))
+	if total <= 0 || count <= 0 || total <= count {
+		return nil
+	}
+
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	q := u.Query()
+	aiPage := parsePositiveInt(q.Get("ai_page"))
+	maxPage := (total + count - 1) / count
+	next := aiPage + 1
+	if next >= maxPage {
+		return nil
+	}
+	q.Set("ai_page", strconv.Itoa(next))
+	u.RawQuery = q.Encode()
+	return []string{u.String()}
+}
+
+func parsePositiveInt(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func looksLikePaginationOrInventoryURL(u string) bool {
+	l := strings.ToLower(u)
+	if strings.Contains(l, "/vehicle-details/") {
+		return false
+	}
+	return strings.Contains(l, "/page/") ||
+		strings.Contains(l, "page=") ||
+		strings.Contains(l, "/inventory") ||
+		strings.Contains(l, "/used-cars")
 }
 
 func sameHost(baseURL, candidate string) bool {
@@ -284,6 +453,7 @@ func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site confi
 	}
 	for i := range allItems {
 		allItems[i] = NormalizeItem(sourceURL, allItems[i])
+		allItems[i] = applyItemAliases(allItems[i], "", sourceURL)
 	}
 	allItems = Dedupe(allItems)
 
@@ -301,4 +471,46 @@ func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site confi
 		errs = append(errs, model.StructuredError{Code: "NO_ITEMS", Message: fmt.Sprintf("no inventory found for %s", sourceURL)})
 	}
 	return RunResult{Items: allItems, Errors: errs}
+}
+
+func applyItemAliases(item model.InventoryItem, dealershipID, sourceURL string) model.InventoryItem {
+	if item.Stock == "" {
+		item.Stock = item.StockID
+	}
+	if item.Website == "" {
+		item.Website = sourceURL
+	}
+	if item.DealerID == "" {
+		item.DealerID = dealershipID
+	}
+	if len(item.PhotoURLs) == 0 {
+		item.PhotoURLs = item.Images
+	}
+	if item.VehicleListPrice == "" {
+		item.VehicleListPrice = item.Price
+	}
+	if item.Style == "" {
+		item.Style = inferStyle(item.Title)
+	}
+	return item
+}
+
+func inferStyle(title string) string {
+	t := strings.TrimSpace(strings.ToLower(title))
+	switch {
+	case strings.Contains(t, "sedan"):
+		return "sedan"
+	case strings.Contains(t, "coupe"):
+		return "coupe"
+	case strings.Contains(t, "hatch"):
+		return "hatchback"
+	case strings.Contains(t, "truck"), strings.Contains(t, "pickup"):
+		return "truck"
+	case strings.Contains(t, "suv"), strings.Contains(t, "crossover"):
+		return "suv"
+	case strings.Contains(t, "van"), strings.Contains(t, "minivan"):
+		return "van"
+	default:
+		return ""
+	}
 }

@@ -29,9 +29,21 @@ Request:
   "dealershipId": "txtcharlie",
   "sourceUrl": "https://www.txtcharlie.com/inventory/",
   "idempotencyKey": "run-2026-04-30",
-  "options": { "runTimeoutSec": 240 }
+  "options": {
+    "runTimeoutSec": 240,
+    "browserStrategy": "playwright_first",
+    "enableAIEnrichment": true
+  }
 }
 ```
+
+Additional scrape options:
+- `browserStrategy`: `playwright_first` (default) or `rod_first`
+- `enableAIEnrichment`: when true and `OPENAI_API_KEY` is set, fills missing vehicle fields via structured OpenAI output
+
+Per-item response now includes additive aliases for UI mapping:
+- `dealerId`, `website`, `vehicleListPrice`, `photoURLs`, `stock`, `style`
+- Existing fields (`stockId`, `price`, `images`, `primaryImage`, etc.) are unchanged
 
 ### `GET /v1/results/:resultId`
 Returns persisted scrape result (status, items, errors) from SQLite.
@@ -151,6 +163,28 @@ go mod tidy
 go test ./...
 go run ./cmd/server
 ```
+
+### Generic Any-Site Scrape (Rod + Goquery + OpenAI Structured Output)
+This repo now includes `cmd/scrapeany`, a generic command to scrape almost any website with:
+- Browser render: `rod` (headless Chromium)
+- DOM candidate extraction: `goquery`
+- AI normalization: OpenAI Responses API with `json_schema` output
+
+Install dependency once:
+```bash
+go get github.com/go-rod/rod@latest
+```
+
+Run:
+```bash
+OPENAI_API_KEY=sk-... \
+OPENAI_MODEL=gpt-5 \
+go run ./cmd/scrapeany -url "https://example.com"
+```
+
+Optional flags:
+- `-timeout 60s`
+- `-max-candidates 200`
 
 ### Docker
 ```bash

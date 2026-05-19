@@ -35,6 +35,11 @@ type Config struct {
 	EnableCodexDiscovery       bool
 	OpenAIAPIKey               string
 	OpenAIModel                string
+	PlaywrightCommand          string
+	DefaultMaxPages            int
+	DefaultMaxScrollAttempts   int
+	DefaultMaxLoadMoreClicks   int
+	DefaultMaxItems            int
 }
 
 func Load() (Config, error) {
@@ -72,6 +77,11 @@ func Load() (Config, error) {
 		EnableCodexDiscovery:       viper.GetBool("ENABLE_CODEX_DISCOVERY"),
 		OpenAIAPIKey:               viper.GetString("OPENAI_API_KEY"),
 		OpenAIModel:                viper.GetString("OPENAI_MODEL"),
+		PlaywrightCommand:          viper.GetString("PLAYWRIGHT_COMMAND"),
+		DefaultMaxPages:            viper.GetInt("DEFAULT_MAX_PAGES"),
+		DefaultMaxScrollAttempts:   viper.GetInt("DEFAULT_MAX_SCROLL_ATTEMPTS"),
+		DefaultMaxLoadMoreClicks:   viper.GetInt("DEFAULT_MAX_LOAD_MORE_CLICKS"),
+		DefaultMaxItems:            viper.GetInt("DEFAULT_MAX_ITEMS"),
 	}
 	if cfg.ServiceKey == "" {
 		return Config{}, fmt.Errorf("SERVICE_KEY is required")
@@ -113,4 +123,9 @@ func setDefaults() {
 	viper.SetDefault("ALLOW_MAIN_DB_WRITE", false)
 	viper.SetDefault("ENABLE_CODEX_DISCOVERY", false)
 	viper.SetDefault("OPENAI_MODEL", "gpt-4.1-mini")
+	viper.SetDefault("PLAYWRIGHT_COMMAND", `npx -y -p playwright -c 'node -e '"'"'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'"'"''`)
+	viper.SetDefault("DEFAULT_MAX_PAGES", 20)
+	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
+	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)
+	viper.SetDefault("DEFAULT_MAX_ITEMS", 0)
 }
