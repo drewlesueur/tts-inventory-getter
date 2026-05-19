@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -17,12 +18,35 @@ type ChromeBrowser struct {
 
 func NewChromeBrowser(headless bool) (*ChromeBrowser, context.CancelFunc) {
 	opts := chromedp.DefaultExecAllocatorOptions[:]
+	if p := detectChromeExecPath(); p != "" {
+		opts = append(opts, chromedp.ExecPath(p))
+	}
 	if headless {
 		opts = append(opts, chromedp.Headless, chromedp.DisableGPU)
 	}
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	cancel := func() { cancelAlloc() }
 	return &ChromeBrowser{allocCtx: allocCtx}, cancel
+}
+
+func detectChromeExecPath() string {
+	candidates := []string{
+		strings.TrimSpace(os.Getenv("CHROME_BIN")),
+		strings.TrimSpace(os.Getenv("CHROME_PATH")),
+		"/usr/bin/google-chrome",
+		"/usr/bin/chromium-browser",
+		"/usr/bin/chromium",
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
 }
 
 func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (string, error) {

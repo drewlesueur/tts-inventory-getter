@@ -30,7 +30,7 @@ func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, _ config.S
 		return "", fmt.Errorf("playwright command missing")
 	}
 	script := p.Command + " " + strconv.Quote(urlStr)
-	cmd := exec.CommandContext(ctx, "/bin/zsh", "-lc", script)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	cmd.Stdout = &out
