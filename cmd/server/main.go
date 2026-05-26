@@ -82,7 +82,7 @@ func main() {
 	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL}
 	var imageCronRunner, upsertCronRunner, idempotencyCronRunner *scrape.CronRunner
 	if cfg.EnableImageUpdateCron {
-		imageCronRunner, err = scrape.StartCron(logger, cfg.ImageUpdateCronSpec, func() {
+		imageCronRunner, err = scrape.StartCronNamed(logger, "image-update", cfg.ImageUpdateCronSpec, func() {
 			runImageUpdate(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 		})
 		if err != nil {
@@ -90,7 +90,7 @@ func main() {
 		}
 	}
 	if cfg.EnableDailyUpsertCron {
-		upsertCronRunner, err = scrape.StartCron(logger, cfg.DailyUpsertCronSpec, func() {
+		upsertCronRunner, err = scrape.StartCronNamed(logger, "daily-upsert", cfg.DailyUpsertCronSpec, func() {
 			runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 		})
 		if err != nil {
@@ -98,7 +98,7 @@ func main() {
 		}
 	}
 	if cfg.EnableIdempotencyClearCron {
-		idempotencyCronRunner, err = scrape.StartCron(logger, cfg.IdempotencyClearCronSpec, func() {
+		idempotencyCronRunner, err = scrape.StartCronNamed(logger, "idempotency-clear", cfg.IdempotencyClearCronSpec, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := resultStore.ClearIdempotency(ctx); err != nil {
@@ -201,23 +201,41 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 func runImageUpdate(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
 	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "image-update") {
 		updates := make([]inventoryapi.ImageUpdate, 0, len(sp.items))
+		upserts := make([]model.InventoryItem, 0, len(sp.items))
 		for _, it := range sp.items {
-			if it.StockID == "" || len(it.Images) == 0 {
+			if it.StockID == "" {
+				continue
+			}
+			upserts = append(upserts, it)
+			if len(it.Images) == 0 {
 				continue
 			}
 			updates = append(updates, inventoryapi.ImageUpdate{StockID: it.StockID, Images: it.Images})
 		}
-		if len(updates) == 0 {
-			logger.Info("no image updates to push", zap.String("dealershipId", sp.page.DealershipID), zap.String("accountID", sp.page.AccountID))
-			continue
-		}
-		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := invClient.UpdateImages(postCtx, sp.page.AccountID, updates); err != nil {
-			logger.Error("inventory api update failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
+
+		if len(upserts) > 0 {
+			postCtx, postCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			if err := invClient.UpsertInventory(postCtx, sp.page.AccountID, upserts); err != nil {
+				logger.Error("inventory api upsert failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
+			} else {
+				logger.Info("inventory upserted", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(upserts)))
+			}
+			postCancel()
 		} else {
-			logger.Info("inventory images pushed", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(updates)))
+			logger.Info("no inventory to upsert", zap.String("dealershipId", sp.page.DealershipID), zap.String("accountID", sp.page.AccountID))
 		}
-		postCancel()
+
+		if len(updates) > 0 {
+			postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := invClient.UpdateImages(postCtx, sp.page.AccountID, updates); err != nil {
+				logger.Error("inventory api update failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
+			} else {
+				logger.Info("inventory images pushed", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(updates)))
+			}
+			postCancel()
+		} else {
+			logger.Info("no image updates to push", zap.String("dealershipId", sp.page.DealershipID), zap.String("accountID", sp.page.AccountID))
+		}
 	}
 }
 

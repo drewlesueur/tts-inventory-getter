@@ -15,11 +15,32 @@ type CronRunner struct {
 }
 
 func StartCron(logger *zap.Logger, spec string, job func()) (*CronRunner, error) {
+	return StartCronNamed(logger, "", spec, job)
+}
+
+func StartCronNamed(logger *zap.Logger, name, spec string, job func()) (*CronRunner, error) {
 	c := cron.New(cron.WithSeconds())
-	_, err := c.AddFunc(spec, job)
-	if err != nil { return nil, err }
+	wrapped := func() {
+		start := time.Now()
+		logger.Info("cron tick started", zap.String("name", name), zap.String("spec", spec))
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("cron tick panicked", zap.String("name", name), zap.Any("panic", r))
+			}
+		}()
+		job()
+		logger.Info("cron tick finished", zap.String("name", name), zap.Duration("elapsed", time.Since(start)))
+	}
+	entryID, err := c.AddFunc(spec, wrapped)
+	if err != nil {
+		return nil, err
+	}
 	c.Start()
-	logger.Info("cron started", zap.String("spec", spec))
+	next := time.Time{}
+	if entry := c.Entry(entryID); entry.ID != 0 {
+		next = entry.Next
+	}
+	logger.Info("cron started", zap.String("name", name), zap.String("spec", spec), zap.Time("nextRun", next))
 	return &CronRunner{cron: c}, nil
 }
 

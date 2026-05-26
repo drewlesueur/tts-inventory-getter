@@ -25,9 +25,15 @@ type PageEntry struct {
 }
 
 type listResponse struct {
-	Status  int         `json:"status"`
-	Message string      `json:"message"`
-	Data    []PageEntry `json:"data"`
+	Status  int     `json:"status"`
+	Message string  `json:"message"`
+	Data    listData `json:"data"`
+}
+
+type listData struct {
+	Count       int         `json:"count"`
+	GeneratedAt string      `json:"generatedAt"`
+	Items       []PageEntry `json:"items"`
 }
 
 type ImageUpdate struct {
@@ -69,7 +75,7 @@ func (c *Client) ListPages(ctx context.Context) ([]PageEntry, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
-	return out.Data, nil
+	return out.Data.Items, nil
 }
 
 type upsertRequest struct {

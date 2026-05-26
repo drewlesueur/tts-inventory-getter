@@ -1,0 +1,23 @@
+{
+  "name": "taptosign_scrapper",
+  "version": "1.0.0",
+  "description": "Production-oriented scraper service for dealership inventory extraction.",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github_personal:drewlesueur/tts-inventory-getter.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}
