@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ func detectChromeExecPath() string {
 		"/usr/bin/chromium-browser",
 		"/usr/bin/chromium",
 		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+		"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 	}
 	for _, c := range candidates {
 		if c == "" {
@@ -44,6 +47,11 @@ func detectChromeExecPath() string {
 		}
 		if _, err := os.Stat(c); err == nil {
 			return c
+		}
+	}
+	for _, name := range []string{"google-chrome", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
 		}
 	}
 	return ""

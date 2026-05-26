@@ -17,10 +17,12 @@ type PlaywrightBrowser struct {
 	Command string
 }
 
+const defaultPlaywrightCommand = `npx --yes --package=playwright -- node -e 'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'`
+
 func NewPlaywrightBrowser(command string) *PlaywrightBrowser {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		command = `npx -y -p playwright -c 'node -e '"'"'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'"'"''`
+		command = defaultPlaywrightCommand
 	}
 	return &PlaywrightBrowser{Command: command}
 }

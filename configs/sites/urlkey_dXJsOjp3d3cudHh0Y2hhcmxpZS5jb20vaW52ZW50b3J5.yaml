@@ -20,6 +20,7 @@ listPage:
         clickMaxAttempts: 0
 detailPage:
     imageSelectors:
+        - .e-gallery-image[data-thumbnail]
         - .gallery img
         - img[data-src]
         - img[src*='vehicle']

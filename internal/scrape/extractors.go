@@ -540,6 +540,9 @@ func firstNonEmptyImageAttr(s *goquery.Selection) string {
 		if raw == "" {
 			continue
 		}
+		if strings.HasPrefix(strings.ToLower(raw), "data:image/") {
+			continue
+		}
 		if k == "srcset" || k == "data-srcset" {
 			if u := firstFromSrcset(raw); u != "" {
 				return u

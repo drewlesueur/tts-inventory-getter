@@ -22,10 +22,10 @@ type Config struct {
 	ScrapeMaxAttempts          int
 	ScrapeRetryBackoffSec      int
 	HTTPFetchTimeoutSec        int
-	EnableImageUpdateCron      bool
-	ImageUpdateCronSpec        string
 	EnableDailyUpsertCron      bool
 	DailyUpsertCronSpec        string
+	EnableWeeklyUpsertCron     bool
+	WeeklyUpsertCronSpec       string
 	EnableIdempotencyClearCron bool
 	IdempotencyClearCronSpec   string
 	InventoryAPIBaseURL        string
@@ -64,10 +64,10 @@ func Load() (Config, error) {
 		ScrapeMaxAttempts:          viper.GetInt("SCRAPE_MAX_ATTEMPTS"),
 		ScrapeRetryBackoffSec:      viper.GetInt("SCRAPE_RETRY_BACKOFF_SEC"),
 		HTTPFetchTimeoutSec:        viper.GetInt("HTTP_FETCH_TIMEOUT_SEC"),
-		EnableImageUpdateCron:      viper.GetBool("ENABLE_IMAGE_UPDATE_CRON"),
-		ImageUpdateCronSpec:        viper.GetString("IMAGE_UPDATE_CRON_SPEC"),
 		EnableDailyUpsertCron:      viper.GetBool("ENABLE_DAILY_UPSERT_CRON"),
 		DailyUpsertCronSpec:        viper.GetString("DAILY_UPSERT_CRON_SPEC"),
+		EnableWeeklyUpsertCron:     viper.GetBool("ENABLE_WEEKLY_UPSERT_CRON"),
+		WeeklyUpsertCronSpec:       viper.GetString("WEEKLY_UPSERT_CRON_SPEC"),
 		EnableIdempotencyClearCron: viper.GetBool("ENABLE_IDEMPOTENCY_CLEAR_CRON"),
 		IdempotencyClearCronSpec:   viper.GetString("IDEMPOTENCY_CLEAR_CRON_SPEC"),
 		InventoryAPIBaseURL:        viper.GetString("INVENTORY_API_BASE_URL"),
@@ -111,10 +111,10 @@ func setDefaults() {
 	viper.SetDefault("SCRAPE_MAX_ATTEMPTS", 3)
 	viper.SetDefault("SCRAPE_RETRY_BACKOFF_SEC", 2)
 	viper.SetDefault("HTTP_FETCH_TIMEOUT_SEC", 25)
-	viper.SetDefault("ENABLE_IMAGE_UPDATE_CRON", false)
-	viper.SetDefault("IMAGE_UPDATE_CRON_SPEC", "0 0 */2 * * *")
 	viper.SetDefault("ENABLE_DAILY_UPSERT_CRON", false)
 	viper.SetDefault("DAILY_UPSERT_CRON_SPEC", "@daily")
+	viper.SetDefault("ENABLE_WEEKLY_UPSERT_CRON", false)
+	viper.SetDefault("WEEKLY_UPSERT_CRON_SPEC", "0 0 2 * * 0")
 	viper.SetDefault("ENABLE_IDEMPOTENCY_CLEAR_CRON", false)
 	viper.SetDefault("IDEMPOTENCY_CLEAR_CRON_SPEC", "@daily")
 	viper.SetDefault("INVENTORY_API_BASE_URL", "http://localhost")
@@ -123,7 +123,7 @@ func setDefaults() {
 	viper.SetDefault("ALLOW_MAIN_DB_WRITE", false)
 	viper.SetDefault("ENABLE_CODEX_DISCOVERY", false)
 	viper.SetDefault("OPENAI_MODEL", "gpt-4.1-mini")
-	viper.SetDefault("PLAYWRIGHT_COMMAND", `npx -y -p playwright -c 'node -e '"'"'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'"'"''`)
+	viper.SetDefault("PLAYWRIGHT_COMMAND", `npx --yes --package=playwright -- node -e 'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'`)
 	viper.SetDefault("DEFAULT_MAX_PAGES", 20)
 	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
 	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)

@@ -14,7 +14,7 @@ Production-oriented scraper service for dealership inventory extraction.
 - `internal/api`: HTTP handlers/middleware
 - `internal/scrape`: browser render, parsing strategies, normalization, detail image fetch, retry, dedupe
 - `internal/discovery`: Codex/OpenAI-driven selector discovery
-- `internal/inventoryapi`: client for upstream inventory API (URL list + image updates)
+- `internal/inventoryapi`: client for upstream inventory API (scheduled URL list + inventory upserts)
 - `internal/config`: env + site config loader (with in-memory cache for discovered configs)
 - `internal/store`: SQLite scrape result persistence
 - `internal/auth`: API key and optional HMAC middleware
@@ -102,17 +102,18 @@ All API errors return:
 ## Scheduled Scrape Flow
 Three independent crons, each toggled by its own `ENABLE_*` flag:
 
-**1. Image refresh** (`ENABLE_IMAGE_UPDATE_CRON`, `IMAGE_UPDATE_CRON_SPEC`, default every 2 hours)
-1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` → expects `{ "data": [{accountID, dealershipId, url}, ...] }`.
-2. For each entry, loads `configs/sites/<dealershipId>.yaml` (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
-3. Runs `ScrapeOnce` against `url`.
-4. For items with both `stockId` and at least one image, `POST <INVENTORY_API_BASE_URL>/updateAccountInventoryImages` with `{accountID, items: [{stockId, images}]}`.
+**1. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
+1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` -> expects `{ "data": { "items": [{accountID, dealershipId, url}, ...] } }` (legacy `data` arrays are also accepted).
+2. Processes entries whose `schedule.type` is `daily` (entries without a schedule are treated as daily for compatibility).
+3. For each entry, loads its URL-keyed site config (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
+4. Runs `ScrapeOnce` against `url`.
+5. For items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields, including detail-page images.
 
-**2. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
-Same scrape pipeline as image refresh, but for items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields (`stockId, url, title, year, make, model, vin, primaryImage, images, price, mileage`).
+**2. Weekly inventory upsert** (`ENABLE_WEEKLY_UPSERT_CRON`, `WEEKLY_UPSERT_CRON_SPEC`, default Sunday at 02:00)
+Uses the same full inventory upsert pipeline for entries whose `schedule.type` is `weekly`.
 
 **3. Idempotency clear** (`ENABLE_IDEMPOTENCY_CLEAR_CRON`, `IDEMPOTENCY_CLEAR_CRON_SPEC`, default `@daily`)
-Wipes the idempotency-key → result mapping so old keys can be reused. Result rows themselves are kept (still queryable by `resultId`).
+Wipes the idempotency-key -> result mapping so old keys can be reused. Result rows themselves are kept (still queryable by `resultId`).
 
 Each per-dealership scrape is also persisted to SQLite for inspection via `GET /v1/results/:resultId`.
 
@@ -124,9 +125,9 @@ Key vars:
 - `SQLITE_PATH` (default `data/scraper_results.db`)
 - `ENABLE_HMAC`, `HMAC_SECRET`
 - `DEFAULT_RUN_TIMEOUT_SEC`, `SCRAPE_CONCURRENCY`
-- `ENABLE_IMAGE_UPDATE_CRON` + `IMAGE_UPDATE_CRON_SPEC` (default `0 0 */2 * * *`, every 2 hours) — image-only refresh
-- `ENABLE_DAILY_UPSERT_CRON` + `DAILY_UPSERT_CRON_SPEC` (default `@daily`) — full inventory upsert
-- `ENABLE_IDEMPOTENCY_CLEAR_CRON` + `IDEMPOTENCY_CLEAR_CRON_SPEC` (default `@daily`) — clears idempotency-key → result mapping
+- `ENABLE_DAILY_UPSERT_CRON` + `DAILY_UPSERT_CRON_SPEC` (default `@daily`) - full inventory upsert for daily sources
+- `ENABLE_WEEKLY_UPSERT_CRON` + `WEEKLY_UPSERT_CRON_SPEC` (default Sunday at 02:00) - full inventory upsert for weekly sources
+- `ENABLE_IDEMPOTENCY_CLEAR_CRON` + `IDEMPOTENCY_CLEAR_CRON_SPEC` (default `@daily`) - clears idempotency-key -> result mapping
 - `INVENTORY_API_BASE_URL` (default `http://localhost`)
 - `ERROR_LOG_PATH` (default `data/errors.log`) — error-level (and above) log entries are appended here in JSON
 - `ENABLE_CODEX_DISCOVERY`, `OPENAI_API_KEY`, `OPENAI_MODEL`

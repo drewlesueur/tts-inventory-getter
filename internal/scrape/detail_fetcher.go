@@ -40,23 +40,42 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 	if err != nil {
 		return item, err
 	}
-	imgSet := map[string]struct{}{}
+	imgSet := map[string]bool{}
 	for _, sel := range site.DetailPage.ImageSelectors {
 		doc.Find(sel).Each(func(_ int, s *goquery.Selection) {
 			if !imgAttrSizeOK(s) {
 				return
 			}
-			if src := firstNonEmptyImageAttr(s); src != "" && isLikelyVehicleImageURL(src) {
-				imgSet[src] = struct{}{}
+			if src := detailImageURL(s); src != "" && isLikelyVehicleImageURL(src) {
+				imgSet[src] = imgSet[src] || imgAttrSizeKnownLarge(s)
 			}
 		})
 	}
 	imgs := make([]string, 0, len(imgSet))
-	for img := range imgSet {
+	probeImgs := make([]string, 0, len(imgSet))
+	for img, knownLarge := range imgSet {
 		imgs = append(imgs, img)
+		if !knownLarge {
+			probeImgs = append(probeImgs, img)
+		}
 	}
-	if len(imgs) > 0 && sizeCache != nil {
-		imgs = filterByImageSize(ctx, sizeCache, imgs, minImageDimension)
+	if len(probeImgs) > 0 && sizeCache != nil {
+		probed := filterByImageSize(ctx, sizeCache, probeImgs, minImageDimension)
+		keep := make(map[string]struct{}, len(probed))
+		for _, img := range probed {
+			keep[img] = struct{}{}
+		}
+		filtered := imgs[:0]
+		for _, img := range imgs {
+			if imgSet[img] {
+				filtered = append(filtered, img)
+				continue
+			}
+			if _, ok := keep[img]; ok {
+				filtered = append(filtered, img)
+			}
+		}
+		imgs = filtered
 	}
 	if len(imgs) > 0 {
 		item.Images = imgs
@@ -160,6 +179,18 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 	return NormalizeItem(item.URL, item), nil
 }
 
+func detailImageURL(s *goquery.Selection) string {
+	if src := firstNonEmptyImageAttr(s); src != "" {
+		return src
+	}
+	for _, attr := range []string{"href", "data-thumbnail", "data-bg", "data-background-image"} {
+		if src := strings.TrimSpace(s.AttrOr(attr, "")); src != "" {
+			return src
+		}
+	}
+	return urlFromStyle(s.AttrOr("style", ""))
+}
+
 func findVINInText(text string) string {
 	re := regexp.MustCompile(`\b([A-HJ-NPR-Z0-9]{17})\b`)
 	if m := re.FindStringSubmatch(strings.ToUpper(text)); len(m) > 1 {
@@ -231,8 +262,8 @@ func pickValueByLabel(kv map[string]string, labels ...string) string {
 }
 
 func imgAttrSizeOK(s *goquery.Selection) bool {
-	w, _ := strconv.Atoi(strings.TrimSpace(s.AttrOr("width", "")))
-	h, _ := strconv.Atoi(strings.TrimSpace(s.AttrOr("height", "")))
+	w := imageAttrDimension(s, "width")
+	h := imageAttrDimension(s, "height")
 	if w > 0 && w < minImageDimension {
 		return false
 	}
@@ -240,4 +271,17 @@ func imgAttrSizeOK(s *goquery.Selection) bool {
 		return false
 	}
 	return true
+}
+
+func imgAttrSizeKnownLarge(s *goquery.Selection) bool {
+	return imageAttrDimension(s, "width") >= minImageDimension && imageAttrDimension(s, "height") >= minImageDimension
+}
+
+func imageAttrDimension(s *goquery.Selection, name string) int {
+	for _, attr := range []string{name, "data-" + name} {
+		if n, err := strconv.Atoi(strings.TrimSpace(s.AttrOr(attr, ""))); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }

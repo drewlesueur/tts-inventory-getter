@@ -22,22 +22,37 @@ type PageEntry struct {
 	AccountID    string `json:"accountID"`
 	DealershipID string `json:"dealershipId"`
 	URL          string `json:"url"`
+	Schedule     struct {
+		Type string `json:"type"`
+	} `json:"schedule"`
 }
 
 type listResponse struct {
 	Status  int         `json:"status"`
 	Message string      `json:"message"`
-	Data    []PageEntry `json:"data"`
+	Data    pageEntries `json:"data"`
 }
 
-type ImageUpdate struct {
-	StockID string   `json:"stockId"`
-	Images  []string `json:"images"`
-}
+type pageEntries []PageEntry
 
-type updateRequest struct {
-	AccountID string        `json:"accountID"`
-	Items     []ImageUpdate `json:"items"`
+func (p *pageEntries) UnmarshalJSON(data []byte) error {
+	var entries []PageEntry
+	if err := json.Unmarshal(data, &entries); err == nil {
+		*p = entries
+		return nil
+	}
+
+	var wrapped struct {
+		Items []PageEntry `json:"items"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err != nil {
+		return fmt.Errorf("decode page entries: %w", err)
+	}
+	if wrapped.Items == nil {
+		return fmt.Errorf("decode page entries: expected array or object containing items")
+	}
+	*p = wrapped.Items
+	return nil
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -69,7 +84,7 @@ func (c *Client) ListPages(ctx context.Context) ([]PageEntry, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
-	return out.Data, nil
+	return []PageEntry(out.Data), nil
 }
 
 type upsertRequest struct {
@@ -98,31 +113,6 @@ func (c *Client) UpsertInventory(ctx context.Context, accountID string, items []
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("upsertAccountInventory status=%d body=%s", resp.StatusCode, string(b))
-	}
-	return nil
-}
-
-func (c *Client) UpdateImages(ctx context.Context, accountID string, items []ImageUpdate) error {
-	if len(items) == 0 {
-		return nil
-	}
-	body, err := json.Marshal(updateRequest{AccountID: accountID, Items: items})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/updateAccountInventoryImages", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("updateAccountInventoryImages status=%d body=%s", resp.StatusCode, string(b))
 	}
 	return nil
 }

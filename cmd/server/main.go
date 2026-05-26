@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -80,21 +81,21 @@ func main() {
 	httpServer := &http.Server{Addr: ":" + cfg.Port, Handler: router}
 
 	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL}
-	var imageCronRunner, upsertCronRunner, idempotencyCronRunner *scrape.CronRunner
-	if cfg.EnableImageUpdateCron {
-		imageCronRunner, err = scrape.StartCron(logger, cfg.ImageUpdateCronSpec, func() {
-			runImageUpdate(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
-		})
-		if err != nil {
-			logger.Fatal("image update cron start failed", zap.Error(err))
-		}
-	}
+	var dailyCronRunner, weeklyCronRunner, idempotencyCronRunner *scrape.CronRunner
 	if cfg.EnableDailyUpsertCron {
-		upsertCronRunner, err = scrape.StartCron(logger, cfg.DailyUpsertCronSpec, func() {
+		dailyCronRunner, err = scrape.StartCron(logger, cfg.DailyUpsertCronSpec, func() {
 			runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 		})
 		if err != nil {
 			logger.Fatal("daily upsert cron start failed", zap.Error(err))
+		}
+	}
+	if cfg.EnableWeeklyUpsertCron {
+		weeklyCronRunner, err = scrape.StartCron(logger, cfg.WeeklyUpsertCronSpec, func() {
+			runWeeklyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
+		})
+		if err != nil {
+			logger.Fatal("weekly upsert cron start failed", zap.Error(err))
 		}
 	}
 	if cfg.EnableIdempotencyClearCron {
@@ -120,11 +121,11 @@ func main() {
 	}()
 
 	<-ctx.Done()
-	if imageCronRunner != nil {
-		imageCronRunner.Stop(context.Background())
+	if dailyCronRunner != nil {
+		dailyCronRunner.Stop(context.Background())
 	}
-	if upsertCronRunner != nil {
-		upsertCronRunner.Stop(context.Background())
+	if weeklyCronRunner != nil {
+		weeklyCronRunner.Stop(context.Background())
 	}
 	if idempotencyCronRunner != nil {
 		idempotencyCronRunner.Stop(context.Background())
@@ -140,7 +141,7 @@ type scrapedPage struct {
 	items []model.InventoryItem
 }
 
-func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName string) []scrapedPage {
+func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string) []scrapedPage {
 	listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer listCancel()
 	pages, err := invClient.ListPages(listCtx)
@@ -148,10 +149,16 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 		logger.Error("inventory api list failed", zap.String("job", jobName), zap.Error(err))
 		return nil
 	}
-	logger.Info("scrape job starting", zap.String("job", jobName), zap.Int("pages", len(pages)))
-
-	out := make([]scrapedPage, 0, len(pages))
+	eligible := make([]inventoryapi.PageEntry, 0, len(pages))
 	for _, p := range pages {
+		if pageMatchesSchedule(p, scheduleType) {
+			eligible = append(eligible, p)
+		}
+	}
+	logger.Info("scrape job starting", zap.String("job", jobName), zap.String("schedule", scheduleType), zap.Int("pages", len(eligible)))
+
+	out := make([]scrapedPage, 0, len(eligible))
+	for _, p := range eligible {
 		if p.DealershipID == "" || p.URL == "" {
 			logger.Warn("skipping invalid page entry", zap.String("job", jobName), zap.Any("entry", p))
 			continue
@@ -169,6 +176,7 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 		res := scraper.ScrapeOnceWithOptions(runCtx, p.URL, site, scrape.Options{
 			DealershipID:       p.DealershipID,
 			SourceURL:          p.URL,
+			BrowserStrategy:    "rod_first",
 			EnableAIEnrichment: scraper.AIEnricher != nil,
 		})
 		runCancel()
@@ -198,31 +206,25 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 	return out
 }
 
-func runImageUpdate(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
-	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "image-update") {
-		updates := make([]inventoryapi.ImageUpdate, 0, len(sp.items))
-		for _, it := range sp.items {
-			if it.StockID == "" || len(it.Images) == 0 {
-				continue
-			}
-			updates = append(updates, inventoryapi.ImageUpdate{StockID: it.StockID, Images: it.Images})
-		}
-		if len(updates) == 0 {
-			logger.Info("no image updates to push", zap.String("dealershipId", sp.page.DealershipID), zap.String("accountID", sp.page.AccountID))
-			continue
-		}
-		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := invClient.UpdateImages(postCtx, sp.page.AccountID, updates); err != nil {
-			logger.Error("inventory api update failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
-		} else {
-			logger.Info("inventory images pushed", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(updates)))
-		}
-		postCancel()
+func pageMatchesSchedule(page inventoryapi.PageEntry, scheduleType string) bool {
+	configured := strings.ToLower(strings.TrimSpace(page.Schedule.Type))
+	requested := strings.ToLower(strings.TrimSpace(scheduleType))
+	if requested == "daily" {
+		return configured == "" || configured == "daily"
 	}
+	return configured == requested
 }
 
 func runDailyUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
-	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "daily-upsert") {
+	runScheduledUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "daily-upsert", "daily")
+}
+
+func runWeeklyUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
+	runScheduledUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "weekly-upsert", "weekly")
+}
+
+func runScheduledUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string) {
+	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, jobName, scheduleType) {
 		items := make([]model.InventoryItem, 0, len(sp.items))
 		for _, it := range sp.items {
 			if it.StockID == "" {

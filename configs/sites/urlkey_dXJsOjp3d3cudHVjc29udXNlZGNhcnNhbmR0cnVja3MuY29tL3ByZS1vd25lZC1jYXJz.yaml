@@ -21,8 +21,8 @@ listPage:
         clickMaxAttempts: 30
 detailPage:
     imageSelectors:
+        - '#ds-vdp-photos img[data-src]'
         - .gallery img
-        - img[data-src]
         - img[src*='vehicle']
     vinSelector: ""
     stockSelector: ""
