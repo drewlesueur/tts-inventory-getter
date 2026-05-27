@@ -16,7 +16,7 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 		"status": 200,
 		"message": "success",
 		"data": {
-			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","scrapeFrequencyMinutes":10080,"schedule":{"type":"weekly"}}],
+			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","ftp_sync":true,"scrape_sync":true,"scrapeFrequencyMinutes":10080,"schedule":{"type":"weekly"}}],
 			"count": 1,
 			"generatedAt": "2026-05-26T12:00:00Z"
 		}
@@ -35,6 +35,9 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 	if pages[0].ScrapeFrequencyMinutes != 10080 {
 		t.Fatalf("unexpected frequency: %d", pages[0].ScrapeFrequencyMinutes)
 	}
+	if !pages[0].FTPSyncEnabled() || !pages[0].ScrapeSyncEnabled() {
+		t.Fatalf("unexpected sync flags: ftp=%v scrape=%v", pages[0].FTPSync, pages[0].ScrapeSync)
+	}
 }
 
 func TestListPagesSupportsLegacyDataArray(t *testing.T) {
@@ -50,6 +53,12 @@ func TestListPagesSupportsLegacyDataArray(t *testing.T) {
 	}
 	if len(pages) != 1 || pages[0].URL != "https://legacy.test/inventory" {
 		t.Fatalf("unexpected pages: %#v", pages)
+	}
+	if pages[0].FTPSyncEnabled() {
+		t.Fatalf("legacy page should not run FTP sync without explicit ftp_sync=true")
+	}
+	if !pages[0].ScrapeSyncEnabled() {
+		t.Fatalf("legacy page should keep scraping when scrape_sync is omitted")
 	}
 }
 
@@ -90,6 +99,39 @@ func TestUpsertInventorySendsServiceKeyAndDealershipID(t *testing.T) {
 	}
 	if len(gotBody.Items) != 1 || gotBody.Items[0].StockID != "STK-1001" || len(gotBody.Items[0].Images) != 1 {
 		t.Fatalf("unexpected items in body: %#v", gotBody.Items)
+	}
+}
+
+func TestSyncAccountInventorySourcesSendsServiceKeyAndAccountID(t *testing.T) {
+	var gotHeader string
+	var gotBody syncAccountInventorySourcesRequest
+	client := &Client{
+		BaseURL:    "http://inventory.test",
+		ServiceKey: "service-key",
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotHeader = r.Header.Get("X-Service-Key")
+			if r.URL.Path != "/syncAccountInventorySources" {
+				t.Errorf("unexpected request path: %s", r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":200}`)),
+			}, nil
+		})},
+	}
+
+	err := client.SyncAccountInventorySources(context.Background(), "account-1")
+	if err != nil {
+		t.Fatalf("SyncAccountInventorySources returned error: %v", err)
+	}
+	if gotHeader != "service-key" {
+		t.Fatalf("unexpected X-Service-Key: %q", gotHeader)
+	}
+	if gotBody.AccountID != "account-1" {
+		t.Fatalf("unexpected accountID in body: %#v", gotBody)
 	}
 }
 

@@ -103,11 +103,14 @@ All API errors return:
 Three independent crons, each toggled by its own `ENABLE_*` flag:
 
 **1. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
-1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` -> expects `{ "data": { "items": [{accountID, dealershipId, url}, ...] } }` (legacy `data` arrays are also accepted).
+1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` -> expects `{ "data": { "items": [{accountID, dealershipId, url, ftp_sync, scrape_sync}, ...] } }` (legacy `data` arrays are also accepted).
 2. Processes daily entries using `scrapeFrequencyMinutes` when provided, falling back to `schedule.type` (entries without either are treated as daily for compatibility).
-3. For each entry, loads its URL-keyed site config (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
-4. Runs `ScrapeOnce` against `url`.
-5. For items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields, including detail-page images.
+3. If an eligible entry has `ftp_sync: true`, calls `POST <INVENTORY_API_BASE_URL>/syncAccountInventorySources` with `{ "accountID": "..." }`.
+4. If an eligible entry has `scrape_sync: true`, loads its URL-keyed site config (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
+5. Runs `ScrapeOnce` against `url`.
+6. For scraped items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields, including detail-page images.
+
+If `scrape_sync` is omitted by an older upstream API response, the scheduler keeps the previous behavior and scrapes the entry. `ftp_sync` must be explicitly true to run FTP/source sync.
 
 Example upsert request:
 ```bash

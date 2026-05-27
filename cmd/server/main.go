@@ -159,6 +159,18 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 
 	out := make([]scrapedPage, 0, len(eligible))
 	for _, p := range eligible {
+		if p.FTPSyncEnabled() {
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if err := invClient.SyncAccountInventorySources(syncCtx, p.AccountID); err != nil {
+				logger.Error("inventory source sync failed", zap.String("job", jobName), zap.String("accountID", p.AccountID), zap.Error(err))
+			} else {
+				logger.Info("inventory source synced", zap.String("job", jobName), zap.String("accountID", p.AccountID))
+			}
+			syncCancel()
+		}
+		if !p.ScrapeSyncEnabled() {
+			continue
+		}
 		if p.DealershipID == "" || p.URL == "" {
 			logger.Warn("skipping invalid page entry", zap.String("job", jobName), zap.Any("entry", p))
 			continue

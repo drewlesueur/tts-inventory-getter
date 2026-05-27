@@ -23,10 +23,20 @@ type PageEntry struct {
 	AccountID              string `json:"accountID"`
 	DealershipID           string `json:"dealershipId"`
 	URL                    string `json:"url"`
+	FTPSync                *bool  `json:"ftp_sync"`
+	ScrapeSync             *bool  `json:"scrape_sync"`
 	ScrapeFrequencyMinutes int    `json:"scrapeFrequencyMinutes"`
 	Schedule               struct {
 		Type string `json:"type"`
 	} `json:"schedule"`
+}
+
+func (p PageEntry) FTPSyncEnabled() bool {
+	return p.FTPSync != nil && *p.FTPSync
+}
+
+func (p PageEntry) ScrapeSyncEnabled() bool {
+	return p.ScrapeSync == nil || *p.ScrapeSync
 }
 
 type listResponse struct {
@@ -93,6 +103,37 @@ type upsertRequest struct {
 	AccountID    string                `json:"accountID"`
 	DealershipID string                `json:"dealershipId"`
 	Items        []model.InventoryItem `json:"items"`
+}
+
+type syncAccountInventorySourcesRequest struct {
+	AccountID string `json:"accountID"`
+}
+
+func (c *Client) SyncAccountInventorySources(ctx context.Context, accountID string) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	body, err := json.Marshal(syncAccountInventorySourcesRequest{AccountID: accountID})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/syncAccountInventorySources", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Key", c.ServiceKey)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("syncAccountInventorySources status=%d body=%s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 func (c *Client) UpsertInventory(ctx context.Context, accountID, dealershipID string, items []model.InventoryItem) error {
