@@ -7,9 +7,13 @@ import (
 )
 
 func TestPageMatchesSchedule(t *testing.T) {
-	var daily, weekly, legacy inventoryapi.PageEntry
+	var daily, weekly, legacy, dailyWithBadLabel, weeklyWithBadLabel inventoryapi.PageEntry
 	daily.Schedule.Type = "daily"
 	weekly.Schedule.Type = "weekly"
+	dailyWithBadLabel.Schedule.Type = "weekly"
+	dailyWithBadLabel.ScrapeFrequencyMinutes = 1440
+	weeklyWithBadLabel.Schedule.Type = "daily"
+	weeklyWithBadLabel.ScrapeFrequencyMinutes = 10080
 
 	tests := []struct {
 		name     string
@@ -22,6 +26,8 @@ func TestPageMatchesSchedule(t *testing.T) {
 		{name: "weekly page on weekly run", page: weekly, schedule: "weekly", want: true},
 		{name: "legacy page remains daily", page: legacy, schedule: "daily", want: true},
 		{name: "legacy page excluded from weekly", page: legacy, schedule: "weekly", want: false},
+		{name: "daily frequency wins over stale weekly label", page: dailyWithBadLabel, schedule: "daily", want: true},
+		{name: "weekly frequency wins over stale daily label", page: weeklyWithBadLabel, schedule: "weekly", want: true},
 	}
 
 	for _, tt := range tests {

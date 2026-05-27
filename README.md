@@ -104,13 +104,21 @@ Three independent crons, each toggled by its own `ENABLE_*` flag:
 
 **1. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
 1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` -> expects `{ "data": { "items": [{accountID, dealershipId, url}, ...] } }` (legacy `data` arrays are also accepted).
-2. Processes entries whose `schedule.type` is `daily` (entries without a schedule are treated as daily for compatibility).
+2. Processes daily entries using `scrapeFrequencyMinutes` when provided, falling back to `schedule.type` (entries without either are treated as daily for compatibility).
 3. For each entry, loads its URL-keyed site config (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
 4. Runs `ScrapeOnce` against `url`.
 5. For items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields, including detail-page images.
 
+Example upsert request:
+```bash
+curl -X POST 'http://localhost:PORT/upsertAccountInventory' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Service-Key: replace-with-strong-key' \
+  -d '{"accountID":"SALESPERSON_ID","dealershipId":"DEALERSHIP_ID","items":[{"stockId":"STK-1001","vin":"1HGCM82633A123456","year":"2024","make":"Honda","model":"Accord","style":"Sedan","price":"28995","mileage":"12500","color":"Black","primaryImage":"https://example.com/images/accord-1.jpg","images":["https://example.com/images/accord-1.jpg","https://example.com/images/accord-2.jpg"],"website":"https://example.com/inventory/accord"}]}'
+```
+
 **2. Weekly inventory upsert** (`ENABLE_WEEKLY_UPSERT_CRON`, `WEEKLY_UPSERT_CRON_SPEC`, default Sunday at 02:00)
-Uses the same full inventory upsert pipeline for entries whose `schedule.type` is `weekly`.
+Uses the same full inventory upsert pipeline for weekly entries (`scrapeFrequencyMinutes: 10080`, or `schedule.type: weekly` when frequency is absent).
 
 **3. Idempotency clear** (`ENABLE_IDEMPOTENCY_CLEAR_CRON`, `IDEMPOTENCY_CLEAR_CRON_SPEC`, default `@daily`)
 Wipes the idempotency-key -> result mapping so old keys can be reused. Result rows themselves are kept (still queryable by `resultId`).

@@ -3,18 +3,29 @@ package scrape
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/chromedp"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
 type ChromeBrowser struct {
 	allocCtx context.Context
+}
+
+func chromeBrowserErrorf(format string, args ...any) {
+	if format == "unhandled node event %T" && len(args) == 1 {
+		if _, ok := args[0].(*dom.EventAdoptedStyleSheetsModified); ok {
+			return
+		}
+	}
+	log.Printf("ERROR: "+format, args...)
 }
 
 func NewChromeBrowser(headless bool) (*ChromeBrowser, context.CancelFunc) {
@@ -58,7 +69,7 @@ func detectChromeExecPath() string {
 }
 
 func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (string, error) {
-	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx)
+	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx, chromedp.WithErrorf(chromeBrowserErrorf))
 	defer cancelTab()
 	timeoutCtx, cancel := context.WithTimeout(tabCtx, 45*time.Second)
 	defer cancel()

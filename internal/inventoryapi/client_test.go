@@ -2,10 +2,13 @@ package inventoryapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
@@ -13,7 +16,7 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 		"status": 200,
 		"message": "success",
 		"data": {
-			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","schedule":{"type":"weekly"}}],
+			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","scrapeFrequencyMinutes":10080,"schedule":{"type":"weekly"}}],
 			"count": 1,
 			"generatedAt": "2026-05-26T12:00:00Z"
 		}
@@ -28,6 +31,9 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 	}
 	if pages[0].Schedule.Type != "weekly" {
 		t.Fatalf("unexpected schedule: %#v", pages[0].Schedule)
+	}
+	if pages[0].ScrapeFrequencyMinutes != 10080 {
+		t.Fatalf("unexpected frequency: %d", pages[0].ScrapeFrequencyMinutes)
 	}
 }
 
@@ -44,6 +50,46 @@ func TestListPagesSupportsLegacyDataArray(t *testing.T) {
 	}
 	if len(pages) != 1 || pages[0].URL != "https://legacy.test/inventory" {
 		t.Fatalf("unexpected pages: %#v", pages)
+	}
+}
+
+func TestUpsertInventorySendsServiceKeyAndDealershipID(t *testing.T) {
+	var gotHeader string
+	var gotBody upsertRequest
+	client := &Client{
+		BaseURL:    "http://inventory.test",
+		ServiceKey: "service-key",
+		HTTPClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			gotHeader = r.Header.Get("X-Service-Key")
+			if r.URL.Path != "/upsertAccountInventory" {
+				t.Errorf("unexpected request path: %s", r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":200}`)),
+			}, nil
+		})},
+	}
+
+	err := client.UpsertInventory(context.Background(), "account-1", "dealer-1", []model.InventoryItem{{
+		StockID: "STK-1001",
+		Images:  []string{"https://example.com/images/accord-1.jpg"},
+		Website: "https://example.com/inventory/accord",
+	}})
+	if err != nil {
+		t.Fatalf("UpsertInventory returned error: %v", err)
+	}
+	if gotHeader != "service-key" {
+		t.Fatalf("unexpected X-Service-Key: %q", gotHeader)
+	}
+	if gotBody.AccountID != "account-1" || gotBody.DealershipID != "dealer-1" {
+		t.Fatalf("unexpected identifiers in body: %#v", gotBody)
+	}
+	if len(gotBody.Items) != 1 || gotBody.Items[0].StockID != "STK-1001" || len(gotBody.Items[0].Images) != 1 {
+		t.Fatalf("unexpected items in body: %#v", gotBody.Items)
 	}
 }
 

@@ -1,10 +1,14 @@
 package scrape
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chromedp/cdproto/dom"
 )
 
 func TestDetectChromeExecPathUsesConfiguredBrowser(t *testing.T) {
@@ -24,5 +28,27 @@ func TestNewPlaywrightBrowserUsesValidNpxPackageInvocation(t *testing.T) {
 	command := NewPlaywrightBrowser("").Command
 	if !strings.Contains(command, "npx --yes --package=playwright -- node -e") {
 		t.Fatalf("unexpected default Playwright command: %s", command)
+	}
+}
+
+func TestChromeBrowserErrorfSuppressesAdoptedStyleSheetsEvent(t *testing.T) {
+	var output bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
+	chromeBrowserErrorf("unhandled node event %T", &dom.EventAdoptedStyleSheetsModified{})
+	if output.Len() != 0 {
+		t.Fatalf("expected stylesheet event to be suppressed, got %q", output.String())
+	}
+
+	chromeBrowserErrorf("browser warning %s", "kept")
+	if !strings.Contains(output.String(), "ERROR: browser warning kept") {
+		t.Fatalf("expected other browser errors to remain logged, got %q", output.String())
 	}
 }

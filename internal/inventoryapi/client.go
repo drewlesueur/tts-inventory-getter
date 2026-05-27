@@ -15,14 +15,16 @@ import (
 
 type Client struct {
 	BaseURL    string
+	ServiceKey string
 	HTTPClient *http.Client
 }
 
 type PageEntry struct {
-	AccountID    string `json:"accountID"`
-	DealershipID string `json:"dealershipId"`
-	URL          string `json:"url"`
-	Schedule     struct {
+	AccountID              string `json:"accountID"`
+	DealershipID           string `json:"dealershipId"`
+	URL                    string `json:"url"`
+	ScrapeFrequencyMinutes int    `json:"scrapeFrequencyMinutes"`
+	Schedule               struct {
 		Type string `json:"type"`
 	} `json:"schedule"`
 }
@@ -88,15 +90,16 @@ func (c *Client) ListPages(ctx context.Context) ([]PageEntry, error) {
 }
 
 type upsertRequest struct {
-	AccountID string                `json:"accountID"`
-	Items     []model.InventoryItem `json:"items"`
+	AccountID    string                `json:"accountID"`
+	DealershipID string                `json:"dealershipId"`
+	Items        []model.InventoryItem `json:"items"`
 }
 
-func (c *Client) UpsertInventory(ctx context.Context, accountID string, items []model.InventoryItem) error {
+func (c *Client) UpsertInventory(ctx context.Context, accountID, dealershipID string, items []model.InventoryItem) error {
 	if len(items) == 0 {
 		return nil
 	}
-	body, err := json.Marshal(upsertRequest{AccountID: accountID, Items: items})
+	body, err := json.Marshal(upsertRequest{AccountID: accountID, DealershipID: dealershipID, Items: items})
 	if err != nil {
 		return err
 	}
@@ -105,6 +108,7 @@ func (c *Client) UpsertInventory(ctx context.Context, accountID string, items []
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Key", c.ServiceKey)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return err

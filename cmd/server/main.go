@@ -80,7 +80,7 @@ func main() {
 	router := s.Router()
 	httpServer := &http.Server{Addr: ":" + cfg.Port, Handler: router}
 
-	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL}
+	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL, ServiceKey: cfg.ServiceKey}
 	var dailyCronRunner, weeklyCronRunner, idempotencyCronRunner *scrape.CronRunner
 	if cfg.EnableDailyUpsertCron {
 		dailyCronRunner, err = scrape.StartCron(logger, cfg.DailyUpsertCronSpec, func() {
@@ -207,8 +207,14 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 }
 
 func pageMatchesSchedule(page inventoryapi.PageEntry, scheduleType string) bool {
-	configured := strings.ToLower(strings.TrimSpace(page.Schedule.Type))
 	requested := strings.ToLower(strings.TrimSpace(scheduleType))
+	if page.ScrapeFrequencyMinutes > 0 {
+		if page.ScrapeFrequencyMinutes == 7*24*60 {
+			return requested == "weekly"
+		}
+		return requested == "daily"
+	}
+	configured := strings.ToLower(strings.TrimSpace(page.Schedule.Type))
 	if requested == "daily" {
 		return configured == "" || configured == "daily"
 	}
@@ -237,7 +243,7 @@ func runScheduledUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Se
 			continue
 		}
 		postCtx, postCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		if err := invClient.UpsertInventory(postCtx, sp.page.AccountID, items); err != nil {
+		if err := invClient.UpsertInventory(postCtx, sp.page.AccountID, sp.page.DealershipID, items); err != nil {
 			logger.Error("inventory api upsert failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
 		} else {
 			logger.Info("inventory upserted", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(items)))
