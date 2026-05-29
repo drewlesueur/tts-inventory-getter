@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -22,8 +23,30 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 	item.Price = clean(item.Price)
 	item.Mileage = clean(item.Mileage)
 	item.Engine = clean(item.Engine)
+	item.Cylinders = clean(item.Cylinders)
+	item.Horsepower = clean(item.Horsepower)
+	item.Torque = clean(item.Torque)
 	item.Transmission = clean(item.Transmission)
+	item.TransmissionType = clean(item.TransmissionType)
 	item.DriveType = clean(item.DriveType)
+	item.FuelType = clean(item.FuelType)
+	item.FuelCapacity = clean(item.FuelCapacity)
+	item.FuelEconomy = clean(item.FuelEconomy)
+	item.MilesPerGallon = clean(item.MilesPerGallon)
+	item.MilesPerLiter = clean(item.MilesPerLiter)
+	item.CityMPG = clean(item.CityMPG)
+	item.HighwayMPG = clean(item.HighwayMPG)
+	item.CityMPL = clean(item.CityMPL)
+	item.HighwayMPL = clean(item.HighwayMPL)
+	item.BodyType = clean(item.BodyType)
+	item.SeatInfo = clean(item.SeatInfo)
+	item.PassengerCapacity = clean(item.PassengerCapacity)
+	item.TireInfo = clean(item.TireInfo)
+	item.FrontTire = clean(item.FrontTire)
+	item.RearTire = clean(item.RearTire)
+	item.WheelInfo = clean(item.WheelInfo)
+	item.FrontWheel = clean(item.FrontWheel)
+	item.RearWheel = clean(item.RearWheel)
 	item.VIN = strings.ToUpper(clean(item.VIN))
 	item.URL = absolutize(baseURL, item.URL)
 	item.PrimaryImage = absolutize(baseURL, item.PrimaryImage)
@@ -46,6 +69,7 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 			item.Year = m
 		}
 	}
+	item = fillFuelEconomyConversions(item)
 	if item.Make == "" || item.Model == "" {
 		parts := strings.Fields(item.Title)
 		if len(parts) >= 3 {
@@ -58,6 +82,45 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 		}
 	}
 	return item
+}
+
+func fillFuelEconomyConversions(item model.InventoryItem) model.InventoryItem {
+	if item.FuelEconomy != "" && item.MilesPerGallon == "" {
+		item.MilesPerGallon = normalizeMPGValue(item.FuelEconomy)
+	}
+	if item.MilesPerGallon != "" && item.MilesPerLiter == "" {
+		item.MilesPerLiter = mpgToMPL(item.MilesPerGallon)
+	}
+	if item.CityMPG != "" && item.CityMPL == "" {
+		item.CityMPL = mpgToMPL(item.CityMPG)
+	}
+	if item.HighwayMPG != "" && item.HighwayMPL == "" {
+		item.HighwayMPL = mpgToMPL(item.HighwayMPG)
+	}
+	return item
+}
+
+func normalizeMPGValue(raw string) string {
+	if n, ok := firstNumber(raw); ok {
+		return fmt.Sprintf("%g MPG", n)
+	}
+	return raw
+}
+
+func mpgToMPL(raw string) string {
+	if n, ok := firstNumber(raw); ok && n > 0 {
+		return fmt.Sprintf("%.2f mi/L", n/3.785411784)
+	}
+	return ""
+}
+
+func firstNumber(raw string) (float64, bool) {
+	re := regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)`)
+	if m := re.FindStringSubmatch(raw); len(m) > 1 {
+		n, err := strconv.ParseFloat(m[1], 64)
+		return n, err == nil
+	}
+	return 0, false
 }
 
 func clean(s string) string {

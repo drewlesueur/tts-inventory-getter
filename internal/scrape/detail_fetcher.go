@@ -227,6 +227,35 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 			kv[k] = v
 		}
 	})
+	doc.Find("li, div, p, span").Each(func(_ int, s *goquery.Selection) {
+		text := clean(s.Text())
+		if text == "" || len(text) > 160 {
+			return
+		}
+		if k, v := splitSpecText(text); k != "" && v != "" {
+			kv[k] = v
+		}
+	})
+	doc.Find("li, div, p, span, strong, b").Each(func(_ int, s *goquery.Selection) {
+		label := normalizeSpecLabel(s.Text())
+		if label == "" {
+			return
+		}
+		if v := clean(s.Next().Text()); v != "" && normalizeSpecLabel(v) == "" {
+			kv[label] = v
+			return
+		}
+		if v := clean(s.NextAll().First().Text()); v != "" && normalizeSpecLabel(v) == "" {
+			kv[label] = v
+		}
+	})
+	doc.Find("li, div, p, span").Each(func(_ int, s *goquery.Selection) {
+		text := clean(s.Text())
+		if text == "" || len(text) > 80 {
+			return
+		}
+		applySpecTile(item, text)
+	})
 
 	if item.Make == "" {
 		item.Make = pickValueByLabel(kv, "make")
@@ -240,12 +269,205 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 	if item.Color == "" {
 		item.Color = pickValueByLabel(kv, "color", "exterior color", "ext color")
 	}
+	if item.Engine == "" {
+		item.Engine = pickValueByLabel(kv, "engine", "engine type", "engine description")
+	}
+	if item.Cylinders == "" {
+		item.Cylinders = pickValueByLabel(kv, "cylinders", "cylinder")
+	}
+	if item.Horsepower == "" {
+		item.Horsepower = pickValueByLabel(kv, "horsepower", "hp")
+	}
+	if item.Torque == "" {
+		item.Torque = pickValueByLabel(kv, "torque")
+	}
+	if item.Transmission == "" {
+		item.Transmission = pickValueByLabel(kv, "transmission")
+	}
+	if item.TransmissionType == "" {
+		item.TransmissionType = pickValueByLabel(kv, "transmission type")
+	}
+	if item.DriveType == "" || strings.Contains(strings.ToLower(item.DriveType), "drivetrain") {
+		if v := pickValueByLabel(kv, "drivetrain", "drive train", "drive type", "drive"); v != "" {
+			item.DriveType = v
+		}
+	}
+	if item.FuelType == "" {
+		item.FuelType = pickValueByLabel(kv, "fuel type", "fuel")
+	}
+	if item.FuelCapacity == "" {
+		item.FuelCapacity = pickValueByLabel(kv, "fuel capacity", "fuel tank capacity")
+	}
+	if item.FuelEconomy == "" {
+		item.FuelEconomy = pickValueByLabel(kv, "fuel economy", "combined mpg", "mpg")
+	}
+	if item.CityMPG == "" {
+		item.CityMPG = pickValueByLabel(kv, "city mpg", "city")
+	}
+	if item.HighwayMPG == "" {
+		item.HighwayMPG = pickValueByLabel(kv, "highway mpg", "hwy mpg", "hwy", "highway")
+	}
+	if item.BodyType == "" {
+		item.BodyType = pickValueByLabel(kv, "body type", "body style", "body", "style")
+	}
+	if item.Style == "" {
+		item.Style = pickValueByLabel(kv, "style", "trim")
+	}
+	if item.SeatInfo == "" {
+		item.SeatInfo = pickValueByLabel(kv, "seat info", "seats", "seating")
+	}
+	if item.PassengerCapacity == "" {
+		item.PassengerCapacity = pickValueByLabel(kv, "passengers", "passenger capacity", "seating capacity")
+	}
+	if item.TireInfo == "" {
+		item.TireInfo = pickValueByLabel(kv, "tire", "tires")
+	}
+	if item.FrontTire == "" {
+		item.FrontTire = pickValueByLabel(kv, "front tire")
+	}
+	if item.RearTire == "" {
+		item.RearTire = pickValueByLabel(kv, "rear tire")
+	}
+	if item.WheelInfo == "" {
+		item.WheelInfo = pickValueByLabel(kv, "wheel", "wheels")
+	}
+	if item.FrontWheel == "" {
+		item.FrontWheel = pickValueByLabel(kv, "front wheel")
+	}
+	if item.RearWheel == "" {
+		item.RearWheel = pickValueByLabel(kv, "rear wheel")
+	}
 
 	if item.Color == "" {
 		re := regexp.MustCompile(`(?i)\b(?:exterior\s+color|color)\b[:\s]+([a-z0-9][a-z0-9\s\-\/]{1,40})`)
 		if m := re.FindStringSubmatch(html); len(m) > 1 {
 			item.Color = clean(m[1])
 		}
+	}
+}
+
+func splitSpecText(text string) (string, string) {
+	text = clean(text)
+	for _, sep := range []string{":", "#"} {
+		parts := strings.SplitN(text, sep, 2)
+		if len(parts) != 2 {
+			continue
+		}
+		k := normalizeSpecLabel(parts[0])
+		v := clean(parts[1])
+		if k != "" && v != "" {
+			return k, v
+		}
+	}
+	fields := strings.Fields(text)
+	if len(fields) < 2 {
+		return "", ""
+	}
+	for i := 1; i < len(fields); i++ {
+		k := normalizeSpecLabel(strings.Join(fields[:i], " "))
+		if k != "" {
+			return k, clean(strings.Join(fields[i:], " "))
+		}
+	}
+	return "", ""
+}
+
+func normalizeSpecLabel(raw string) string {
+	s := strings.ToLower(clean(raw))
+	s = strings.Trim(s, " :-#")
+	s = strings.ReplaceAll(s, "_", " ")
+	s = strings.ReplaceAll(s, "-", " ")
+	s = multiSpace.ReplaceAllString(s, " ")
+	switch s {
+	case "vin", "stock", "stock number", "stock no", "stock id", "stock #",
+		"make", "model", "year", "color", "exterior color", "ext color",
+		"engine", "engine type", "engine description", "cylinders", "cylinder",
+		"horsepower", "hp", "torque", "transmission", "transmission type",
+		"drivetrain", "drive train", "drive type", "drive",
+		"fuel", "fuel type", "fuel capacity", "fuel tank capacity", "fuel economy",
+		"combined mpg", "mpg", "city mpg", "city", "highway mpg", "hwy mpg", "hwy", "highway",
+		"body", "body type", "body style", "style", "trim",
+		"seat info", "seats", "seating", "passengers", "passenger capacity", "seating capacity",
+		"tire", "tires", "front tire", "rear tire", "wheel", "wheels", "front wheel", "rear wheel":
+		return s
+	default:
+		return ""
+	}
+}
+
+func applySpecTile(item *model.InventoryItem, text string) {
+	upper := strings.ToUpper(clean(text))
+	lower := strings.ToLower(upper)
+	if item.DriveType == "" {
+		switch {
+		case strings.Contains(upper, "AWD") || strings.Contains(lower, "all wheel drive"):
+			item.DriveType = text
+		case strings.Contains(upper, "FWD") || strings.Contains(lower, "front wheel drive"):
+			item.DriveType = text
+		case strings.Contains(upper, "RWD") || strings.Contains(lower, "rear wheel drive"):
+			item.DriveType = text
+		case strings.Contains(upper, "4WD") || strings.Contains(lower, "four wheel drive"):
+			item.DriveType = text
+		}
+	}
+	if item.Transmission == "" {
+		if regexp.MustCompile(`(?i)\b([0-9]{1,2}\s*speed|automatic|manual|dual\s+clutch|cvt)\b`).MatchString(text) {
+			item.Transmission = text
+		}
+	}
+	if item.TransmissionType == "" {
+		switch {
+		case strings.Contains(lower, "automatic"):
+			item.TransmissionType = "Automatic"
+		case strings.Contains(lower, "manual"):
+			item.TransmissionType = "Manual"
+		}
+	}
+	if item.Engine == "" {
+		if regexp.MustCompile(`(?i)\b(v[0-9]{1,2}|i[0-9]|[0-9](?:\.[0-9])?\s*l(?:iter)?|[0-9]+\s*cylinders?)\b`).MatchString(text) {
+			item.Engine = text
+		}
+	}
+	if item.Cylinders == "" {
+		if m := regexp.MustCompile(`(?i)\b([0-9]{1,2}\s*cylinders?)\b`).FindStringSubmatch(text); len(m) > 1 {
+			item.Cylinders = m[1]
+		}
+	}
+	if item.FuelEconomy == "" {
+		if m := regexp.MustCompile(`(?i)\b([0-9]{1,3}\s*mpg)\b`).FindStringSubmatch(text); len(m) > 1 {
+			item.FuelEconomy = m[1]
+		}
+	}
+	if item.CityMPG == "" {
+		if m := regexp.MustCompile(`(?i)\b([0-9]{1,3})\s*city\s*mpg\b|\bcity\s*mpg\s*([0-9]{1,3})\b`).FindStringSubmatch(text); len(m) > 0 {
+			item.CityMPG = firstRegexGroup(m) + " MPG"
+		}
+	}
+	if item.HighwayMPG == "" {
+		if m := regexp.MustCompile(`(?i)\b([0-9]{1,3})\s*(?:hwy|highway)\s*mpg\b|\b(?:hwy|highway)\s*mpg\s*([0-9]{1,3})\b`).FindStringSubmatch(text); len(m) > 0 {
+			item.HighwayMPG = firstRegexGroup(m) + " MPG"
+		}
+	}
+	if item.BodyType == "" && isLikelyBodyType(upper) {
+		item.BodyType = text
+	}
+}
+
+func firstRegexGroup(groups []string) string {
+	for _, g := range groups[1:] {
+		if g != "" {
+			return g
+		}
+	}
+	return ""
+}
+
+func isLikelyBodyType(upper string) bool {
+	switch strings.TrimSpace(upper) {
+	case "SEDAN", "COUPE", "CONVERTIBLE", "HATCHBACK", "WAGON", "SUV", "TRUCK", "VAN", "MINIVAN", "ROADSTER":
+		return true
+	default:
+		return false
 	}
 }
 

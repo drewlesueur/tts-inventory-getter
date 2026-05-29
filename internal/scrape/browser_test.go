@@ -24,9 +24,9 @@ func TestDetectChromeExecPathUsesConfiguredBrowser(t *testing.T) {
 	}
 }
 
-func TestNewPlaywrightBrowserUsesValidNpxPackageInvocation(t *testing.T) {
+func TestNewPlaywrightBrowserUsesLocalPlaywrightDependency(t *testing.T) {
 	command := NewPlaywrightBrowser("").Command
-	if !strings.Contains(command, "npx --yes --package=playwright -- node -e") {
+	if !strings.Contains(command, "node -e") || !strings.Contains(command, `require("playwright")`) {
 		t.Fatalf("unexpected default Playwright command: %s", command)
 	}
 }

@@ -139,11 +139,77 @@ func mergeMissingFields(dst, src model.InventoryItem) model.InventoryItem {
 	if dst.Engine == "" {
 		dst.Engine = src.Engine
 	}
+	if dst.Cylinders == "" {
+		dst.Cylinders = src.Cylinders
+	}
+	if dst.Horsepower == "" {
+		dst.Horsepower = src.Horsepower
+	}
+	if dst.Torque == "" {
+		dst.Torque = src.Torque
+	}
 	if dst.Transmission == "" {
 		dst.Transmission = src.Transmission
 	}
+	if dst.TransmissionType == "" {
+		dst.TransmissionType = src.TransmissionType
+	}
 	if dst.DriveType == "" {
 		dst.DriveType = src.DriveType
+	}
+	if dst.FuelType == "" {
+		dst.FuelType = src.FuelType
+	}
+	if dst.FuelCapacity == "" {
+		dst.FuelCapacity = src.FuelCapacity
+	}
+	if dst.FuelEconomy == "" {
+		dst.FuelEconomy = src.FuelEconomy
+	}
+	if dst.MilesPerGallon == "" {
+		dst.MilesPerGallon = src.MilesPerGallon
+	}
+	if dst.MilesPerLiter == "" {
+		dst.MilesPerLiter = src.MilesPerLiter
+	}
+	if dst.CityMPG == "" {
+		dst.CityMPG = src.CityMPG
+	}
+	if dst.HighwayMPG == "" {
+		dst.HighwayMPG = src.HighwayMPG
+	}
+	if dst.CityMPL == "" {
+		dst.CityMPL = src.CityMPL
+	}
+	if dst.HighwayMPL == "" {
+		dst.HighwayMPL = src.HighwayMPL
+	}
+	if dst.BodyType == "" {
+		dst.BodyType = src.BodyType
+	}
+	if dst.SeatInfo == "" {
+		dst.SeatInfo = src.SeatInfo
+	}
+	if dst.PassengerCapacity == "" {
+		dst.PassengerCapacity = src.PassengerCapacity
+	}
+	if dst.TireInfo == "" {
+		dst.TireInfo = src.TireInfo
+	}
+	if dst.FrontTire == "" {
+		dst.FrontTire = src.FrontTire
+	}
+	if dst.RearTire == "" {
+		dst.RearTire = src.RearTire
+	}
+	if dst.WheelInfo == "" {
+		dst.WheelInfo = src.WheelInfo
+	}
+	if dst.FrontWheel == "" {
+		dst.FrontWheel = src.FrontWheel
+	}
+	if dst.RearWheel == "" {
+		dst.RearWheel = src.RearWheel
 	}
 	if dst.Color == "" {
 		dst.Color = src.Color

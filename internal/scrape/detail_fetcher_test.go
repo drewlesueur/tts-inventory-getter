@@ -86,3 +86,87 @@ func TestPopulateDetailsFromHTML_ExtractsDealerSyncLazyGalleryImages(t *testing.
 		t.Fatalf("expected resolved DealerSync gallery image, got %#v", out.Images)
 	}
 }
+
+func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromLabelGrid(t *testing.T) {
+	html := `<html><body>
+	<section>
+		<div><strong>Drivetrain</strong><span>FWD</span></div>
+		<div><strong>Fuel Type</strong><span>Gasoline</span></div>
+		<div><strong>Fuel Capacity</strong><span>13 gallons</span></div>
+		<div><strong>Front Wheel</strong><span>18.0 x 7.0</span></div>
+		<div><strong>Rear Wheel</strong><span>18.0 x 7.0</span></div>
+		<div><strong>Front Tire</strong><span>215/45R18 89W</span></div>
+		<div><strong>Rear Tire</strong><span>215/45R18 89W</span></div>
+		<div><strong>Passengers</strong><span>5</span></div>
+	</section>
+	</body></html>`
+
+	item := model.InventoryItem{URL: "https://www.idealcarsaz.com/inventory/used-2018-mazda-mazda3"}
+	out, err := populateDetailsFromHTML(context.Background(), nil, item, config.SiteConfig{}, html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.DriveType != "FWD" {
+		t.Fatalf("expected driveType=FWD got %q", out.DriveType)
+	}
+	if out.FuelType != "Gasoline" || out.FuelCapacity != "13 gallons" {
+		t.Fatalf("expected fuel fields, got fuelType=%q fuelCapacity=%q", out.FuelType, out.FuelCapacity)
+	}
+	if out.FrontWheel != "18.0 x 7.0" || out.RearWheel != "18.0 x 7.0" {
+		t.Fatalf("expected wheel fields, got front=%q rear=%q", out.FrontWheel, out.RearWheel)
+	}
+	if out.FrontTire != "215/45R18 89W" || out.RearTire != "215/45R18 89W" {
+		t.Fatalf("expected tire fields, got front=%q rear=%q", out.FrontTire, out.RearTire)
+	}
+	if out.PassengerCapacity != "5" {
+		t.Fatalf("expected passengerCapacity=5 got %q", out.PassengerCapacity)
+	}
+}
+
+func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromFactTiles(t *testing.T) {
+	html := `<html><body>
+	<div class="facts">
+		<div>V12</div>
+		<div>COUPE</div>
+		<div>17 MPG</div>
+		<div>12 CYLINDER</div>
+		<div>8 SPEED DUAL CLUTCH</div>
+		<div>AWD DRIVE TRAIN</div>
+		<div>26 HWY MPG</div>
+		<div>19 CITY MPG</div>
+	</div>
+	</body></html>`
+
+	item := model.InventoryItem{URL: "https://www.txtcharlie.com/vehicle-details/2024-lamborghini-revuelto-7026/"}
+	out, err := populateDetailsFromHTML(context.Background(), nil, item, config.SiteConfig{}, html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Engine != "V12" {
+		t.Fatalf("expected engine=V12 got %q", out.Engine)
+	}
+	if out.BodyType != "COUPE" {
+		t.Fatalf("expected bodyType=COUPE got %q", out.BodyType)
+	}
+	if out.FuelEconomy != "17 MPG" {
+		t.Fatalf("expected fuelEconomy=17 MPG got %q", out.FuelEconomy)
+	}
+	if out.MilesPerGallon != "17 MPG" || out.MilesPerLiter != "4.49 mi/L" {
+		t.Fatalf("expected mpg/mpl conversion, got mpg=%q mpl=%q", out.MilesPerGallon, out.MilesPerLiter)
+	}
+	if out.Cylinders != "12 CYLINDER" {
+		t.Fatalf("expected cylinders=12 CYLINDER got %q", out.Cylinders)
+	}
+	if out.Transmission != "8 SPEED DUAL CLUTCH" {
+		t.Fatalf("expected transmission=8 SPEED DUAL CLUTCH got %q", out.Transmission)
+	}
+	if out.DriveType != "AWD DRIVE TRAIN" {
+		t.Fatalf("expected driveType=AWD DRIVE TRAIN got %q", out.DriveType)
+	}
+	if out.HighwayMPG != "26 MPG" || out.CityMPG != "19 MPG" {
+		t.Fatalf("expected city/highway mpg, got city=%q highway=%q", out.CityMPG, out.HighwayMPG)
+	}
+	if out.HighwayMPL != "6.87 mi/L" || out.CityMPL != "5.02 mi/L" {
+		t.Fatalf("expected city/highway mpl, got city=%q highway=%q", out.CityMPL, out.HighwayMPL)
+	}
+}

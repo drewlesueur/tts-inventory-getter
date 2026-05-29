@@ -56,11 +56,77 @@ func mergeInventoryItem(base, cand model.InventoryItem) model.InventoryItem {
 	if base.Engine == "" {
 		base.Engine = cand.Engine
 	}
+	if base.Cylinders == "" {
+		base.Cylinders = cand.Cylinders
+	}
+	if base.Horsepower == "" {
+		base.Horsepower = cand.Horsepower
+	}
+	if base.Torque == "" {
+		base.Torque = cand.Torque
+	}
 	if base.Transmission == "" {
 		base.Transmission = cand.Transmission
 	}
+	if base.TransmissionType == "" {
+		base.TransmissionType = cand.TransmissionType
+	}
 	if base.DriveType == "" {
 		base.DriveType = cand.DriveType
+	}
+	if base.FuelType == "" {
+		base.FuelType = cand.FuelType
+	}
+	if base.FuelCapacity == "" {
+		base.FuelCapacity = cand.FuelCapacity
+	}
+	if base.FuelEconomy == "" {
+		base.FuelEconomy = cand.FuelEconomy
+	}
+	if base.MilesPerGallon == "" {
+		base.MilesPerGallon = cand.MilesPerGallon
+	}
+	if base.MilesPerLiter == "" {
+		base.MilesPerLiter = cand.MilesPerLiter
+	}
+	if base.CityMPG == "" {
+		base.CityMPG = cand.CityMPG
+	}
+	if base.HighwayMPG == "" {
+		base.HighwayMPG = cand.HighwayMPG
+	}
+	if base.CityMPL == "" {
+		base.CityMPL = cand.CityMPL
+	}
+	if base.HighwayMPL == "" {
+		base.HighwayMPL = cand.HighwayMPL
+	}
+	if base.BodyType == "" {
+		base.BodyType = cand.BodyType
+	}
+	if base.SeatInfo == "" {
+		base.SeatInfo = cand.SeatInfo
+	}
+	if base.PassengerCapacity == "" {
+		base.PassengerCapacity = cand.PassengerCapacity
+	}
+	if base.TireInfo == "" {
+		base.TireInfo = cand.TireInfo
+	}
+	if base.FrontTire == "" {
+		base.FrontTire = cand.FrontTire
+	}
+	if base.RearTire == "" {
+		base.RearTire = cand.RearTire
+	}
+	if base.WheelInfo == "" {
+		base.WheelInfo = cand.WheelInfo
+	}
+	if base.FrontWheel == "" {
+		base.FrontWheel = cand.FrontWheel
+	}
+	if base.RearWheel == "" {
+		base.RearWheel = cand.RearWheel
 	}
 	if base.PrimaryImage == "" {
 		base.PrimaryImage = cand.PrimaryImage
