@@ -398,6 +398,11 @@ func normalizeSpecLabel(raw string) string {
 func applySpecTile(item *model.InventoryItem, text string) {
 	upper := strings.ToUpper(clean(text))
 	lower := strings.ToLower(upper)
+	if item.Mileage == "" {
+		if m := regexp.MustCompile(`(?i)\b([0-9][0-9,]*)\s*(miles?|mi)\b`).FindStringSubmatch(text); len(m) > 2 {
+			item.Mileage = m[1] + " " + strings.ToLower(m[2])
+		}
+	}
 	if item.DriveType == "" {
 		switch {
 		case strings.Contains(upper, "AWD") || strings.Contains(lower, "all wheel drive"):

@@ -128,6 +128,7 @@ func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromFactTiles(t *testing.T) {
 	<div class="facts">
 		<div>V12</div>
 		<div>COUPE</div>
+		<div>3,042 MILES</div>
 		<div>17 MPG</div>
 		<div>12 CYLINDER</div>
 		<div>8 SPEED DUAL CLUTCH</div>
@@ -147,6 +148,9 @@ func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromFactTiles(t *testing.T) {
 	}
 	if out.BodyType != "COUPE" {
 		t.Fatalf("expected bodyType=COUPE got %q", out.BodyType)
+	}
+	if out.Mileage != "3,042 miles" {
+		t.Fatalf("expected mileage=3,042 miles got %q", out.Mileage)
 	}
 	if out.FuelEconomy != "17 MPG" {
 		t.Fatalf("expected fuelEconomy=17 MPG got %q", out.FuelEconomy)
