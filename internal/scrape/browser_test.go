@@ -31,6 +31,16 @@ func TestNewPlaywrightBrowserUsesLocalPlaywrightDependency(t *testing.T) {
 	}
 }
 
+func TestShouldFallbackToNpxPlaywright(t *testing.T) {
+	errText := `Error: Cannot find module 'playwright'`
+	if !shouldFallbackToNpxPlaywright(errText) {
+		t.Fatalf("expected fallback trigger for missing playwright module")
+	}
+	if shouldFallbackToNpxPlaywright("some unrelated node error") {
+		t.Fatalf("unexpected fallback trigger for unrelated error")
+	}
+}
+
 func TestChromeBrowserErrorfSuppressesAdoptedStyleSheetsEvent(t *testing.T) {
 	var output bytes.Buffer
 	originalOutput := log.Writer()

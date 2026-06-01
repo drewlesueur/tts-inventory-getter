@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,10 +33,20 @@ type Server struct {
 	store    store.ResultStore
 	metrics  *metrics.Metrics
 	discover *discovery.Client
+
+	dailyUpsertMu      sync.Mutex
+	dailyUpsertRunning bool
+	dailyUpsertJob     func()
 }
 
 func NewServer(cfg config.Config, logger *zap.Logger, scraper scrape.Service, sites config.Loader, st store.ResultStore, mt *metrics.Metrics, discover *discovery.Client) *Server {
 	return &Server{cfg: cfg, logger: logger, scraper: scraper, sites: sites, store: st, metrics: mt, discover: discover}
+}
+
+func (s *Server) SetDailyUpsertJob(job func()) {
+	s.dailyUpsertMu.Lock()
+	defer s.dailyUpsertMu.Unlock()
+	s.dailyUpsertJob = job
 }
 
 func (s *Server) Router() http.Handler {
@@ -51,6 +62,8 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
 	v1.HandleFunc("DELETE /v1/site-config-cache", s.handleClearSiteConfigCache)
 	v1.HandleFunc("POST /v1/scrape/discover-flow", s.handleDiscover)
+	v1.HandleFunc("POST /v1/cron/daily-upsert", s.handleDailyUpsertCron)
+	v1.HandleFunc("POST /v1/manual-load/daily-upsert", s.handleDailyUpsertCron)
 
 	protected := chain(v1,
 		auth.APIKeyMiddleware(s.cfg.ServiceKey),
@@ -62,6 +75,41 @@ func (s *Server) Router() http.Handler {
 
 	mux.Handle("/v1/", protected)
 	return mux
+}
+
+func (s *Server) handleDailyUpsertCron(w http.ResponseWriter, _ *http.Request) {
+	s.dailyUpsertMu.Lock()
+	if s.dailyUpsertJob == nil {
+		s.dailyUpsertMu.Unlock()
+		writeJSON(w, http.StatusServiceUnavailable, model.ErrorResponse("JOB_NOT_CONFIGURED", "daily upsert job is not configured"))
+		return
+	}
+	if s.dailyUpsertRunning {
+		s.dailyUpsertMu.Unlock()
+		writeJSON(w, http.StatusConflict, model.ErrorResponse("JOB_ALREADY_RUNNING", "daily upsert job is already running"))
+		return
+	}
+	job := s.dailyUpsertJob
+	jobID := uuid.NewString()
+	s.dailyUpsertRunning = true
+	s.dailyUpsertMu.Unlock()
+
+	go func() {
+		start := time.Now().UTC()
+		s.logger.Info("manual daily upsert started", zap.String("jobId", jobID))
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				s.logger.Error("manual daily upsert panicked", zap.String("jobId", jobID), zap.Any("panic", recovered))
+			}
+			s.dailyUpsertMu.Lock()
+			s.dailyUpsertRunning = false
+			s.dailyUpsertMu.Unlock()
+			s.logger.Info("manual daily upsert finished", zap.String("jobId", jobID), zap.Duration("duration", time.Since(start)))
+		}()
+		job()
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "job": "daily-upsert", "jobId": jobID})
 }
 
 func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {

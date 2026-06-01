@@ -269,6 +269,9 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 	if item.Color == "" {
 		item.Color = pickValueByLabel(kv, "color", "exterior color", "ext color")
 	}
+	if item.Mileage == "" {
+		item.Mileage = pickValueByLabel(kv, "mileage", "miles", "odometer")
+	}
 	if item.Engine == "" {
 		item.Engine = pickValueByLabel(kv, "engine", "engine type", "engine description")
 	}
@@ -381,6 +384,7 @@ func normalizeSpecLabel(raw string) string {
 	switch s {
 	case "vin", "stock", "stock number", "stock no", "stock id", "stock #",
 		"make", "model", "year", "color", "exterior color", "ext color",
+		"mileage", "miles", "odometer",
 		"engine", "engine type", "engine description", "cylinders", "cylinder",
 		"horsepower", "hp", "torque", "transmission", "transmission type",
 		"drivetrain", "drive train", "drive type", "drive",

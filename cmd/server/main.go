@@ -76,11 +76,14 @@ func main() {
 	} else if n > 0 {
 		logger.Info("site config cache warmed", zap.Int("count", n))
 	}
+	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL, ServiceKey: cfg.ServiceKey}
 	s := api.NewServer(cfg, logger, scraper, siteLoader, resultStore, m, discoverClient)
+	s.SetDailyUpsertJob(func() {
+		runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
+	})
 	router := s.Router()
 	httpServer := &http.Server{Addr: ":" + cfg.Port, Handler: router}
 
-	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL, ServiceKey: cfg.ServiceKey}
 	var dailyCronRunner, weeklyCronRunner, idempotencyCronRunner *scrape.CronRunner
 	if cfg.EnableDailyUpsertCron {
 		dailyCronRunner, err = scrape.StartCron(logger, cfg.DailyUpsertCronSpec, func() {

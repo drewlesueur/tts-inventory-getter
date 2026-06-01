@@ -123,6 +123,25 @@ func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromLabelGrid(t *testing.T) {
 	}
 }
 
+func TestPopulateDetailsFromHTML_ExtractsMileageFromMilesLabel(t *testing.T) {
+	html := `<html><body>
+	<aside class="summary">
+		<div><span>Miles:</span> <strong>110,779</strong></div>
+		<div><span>Stock #:</span> <strong>26027</strong></div>
+		<div><span>VIN:</span> <strong>5FRYD4H95GB010521</strong></div>
+	</aside>
+	</body></html>`
+
+	item := model.InventoryItem{URL: "https://www.tucsonusedcarsandtrucks.com/pre-owned-cars/detail/2016-Acura-MDX/1454461"}
+	out, err := populateDetailsFromHTML(context.Background(), nil, item, config.SiteConfig{}, html)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Mileage != "110,779" {
+		t.Fatalf("expected mileage=110,779 got %q", out.Mileage)
+	}
+}
+
 func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromFactTiles(t *testing.T) {
 	html := `<html><body>
 	<div class="facts">

@@ -174,6 +174,75 @@ func TestScrapeOnceEndpoint_IdempotencyDoesNotReuseAcrossDifferentSourceURL(t *t
 	}
 }
 
+func TestDailyUpsertCronEndpointTriggersConfiguredJob(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	called := make(chan struct{}, 1)
+	server.SetDailyUpsertJob(func() {
+		called <- struct{}{}
+	})
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/cron/daily-upsert", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 got %d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("daily-upsert")) {
+		t.Fatalf("expected job name in response: %s", w.Body.String())
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("expected daily upsert job to be called")
+	}
+}
+
+func TestManualLoadDailyUpsertEndpointTriggersConfiguredJob(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	called := make(chan struct{}, 1)
+	server.SetDailyUpsertJob(func() {
+		called <- struct{}{}
+	})
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/manual-load/daily-upsert", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 got %d body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("expected daily upsert job to be called")
+	}
+}
+
+func TestDailyUpsertCronEndpointRequiresConfiguredJob(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/cron/daily-upsert", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 got %d body=%s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("JOB_NOT_CONFIGURED")) {
+		t.Fatalf("expected JOB_NOT_CONFIGURED response: %s", w.Body.String())
+	}
+}
+
 func TestApplyCrawlLimits_UsesDefaultsAndOverrides(t *testing.T) {
 	srv := NewServer(config.Config{
 		DefaultMaxPages:          20,
