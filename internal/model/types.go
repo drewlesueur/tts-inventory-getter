@@ -88,6 +88,7 @@ type ScrapeResult struct {
 	LastError      string            `json:"lastError,omitempty"`
 	IsRetrying     bool              `json:"isRetrying,omitempty"`
 	NextRetryAt    time.Time         `json:"nextRetryAt,omitempty"`
+	ProgressStage  string            `json:"progressStage,omitempty"`
 	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
 	Items          []InventoryItem   `json:"items,omitempty"`
 	Errors         []StructuredError `json:"errors,omitempty"`

@@ -14,6 +14,12 @@ type Options struct {
 	EnableAIEnrichment bool   `json:"enableAIEnrichment,omitempty"`
 	DealershipID       string `json:"dealershipId,omitempty"`
 	SourceURL          string `json:"sourceUrl,omitempty"`
+	Progress           func(Progress)
+}
+
+type Progress struct {
+	Stage      string
+	TotalItems int
 }
 
 type Browser interface {

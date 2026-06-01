@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS scrape_results (
   last_error TEXT,
   is_retrying INTEGER NOT NULL DEFAULT 0,
   next_retry_at TEXT,
+  progress_stage TEXT,
   idempotency_key TEXT,
   items_json TEXT NOT NULL DEFAULT '[]',
   errors_json TEXT NOT NULL DEFAULT '[]'
@@ -70,6 +71,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_scrape_results_idempotency ON scrape_resul
 		`ALTER TABLE scrape_results ADD COLUMN last_error TEXT`,
 		`ALTER TABLE scrape_results ADD COLUMN is_retrying INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE scrape_results ADD COLUMN next_retry_at TEXT`,
+		`ALTER TABLE scrape_results ADD COLUMN progress_stage TEXT`,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -92,8 +94,8 @@ func (s *SQLiteResultStore) UpsertResult(ctx context.Context, result model.Scrap
 INSERT INTO scrape_results (
   result_id, dealership_id, source_url, status, started_at, finished_at,
   total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at,
-  idempotency_key, items_json, errors_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  progress_stage, idempotency_key, items_json, errors_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(result_id) DO UPDATE SET
   dealership_id=excluded.dealership_id,
   source_url=excluded.source_url,
@@ -109,6 +111,7 @@ ON CONFLICT(result_id) DO UPDATE SET
   last_error=excluded.last_error,
   is_retrying=excluded.is_retrying,
   next_retry_at=excluded.next_retry_at,
+  progress_stage=excluded.progress_stage,
   idempotency_key=excluded.idempotency_key,
   items_json=excluded.items_json,
   errors_json=excluded.errors_json
@@ -141,6 +144,7 @@ ON CONFLICT(result_id) DO UPDATE SET
 		result.LastError,
 		isRetrying,
 		nextRetryAt,
+		result.ProgressStage,
 		result.IdempotencyKey,
 		string(items),
 		string(errs),
@@ -149,7 +153,7 @@ ON CONFLICT(result_id) DO UPDATE SET
 }
 
 func (s *SQLiteResultStore) GetResult(ctx context.Context, resultID string) (model.ScrapeResult, error) {
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
 	return s.scanOne(ctx, q, resultID)
 }
 
@@ -167,7 +171,7 @@ func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (
 	if key == "" {
 		return model.ScrapeResult{}, ErrNotFound
 	}
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
 	return s.scanOne(ctx, q, key)
 }
 
@@ -176,6 +180,7 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 	var status string
 	var startedAt, finishedAt, nextRetryAt string
 	var itemsJSON, errorsJSON string
+	var progressStage sql.NullString
 	var isRetrying int
 	err := s.db.QueryRowContext(ctx, query, arg).Scan(
 		&out.ResultID,
@@ -193,6 +198,7 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 		&out.LastError,
 		&isRetrying,
 		&nextRetryAt,
+		&progressStage,
 		&out.IdempotencyKey,
 		&itemsJSON,
 		&errorsJSON,
@@ -204,6 +210,9 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 		return model.ScrapeResult{}, err
 	}
 	out.Status = model.RunStatus(status)
+	if progressStage.Valid {
+		out.ProgressStage = progressStage.String
+	}
 	if out.StartedAt, err = time.Parse(time.RFC3339Nano, startedAt); err != nil {
 		return model.ScrapeResult{}, fmt.Errorf("invalid started_at: %w", err)
 	}

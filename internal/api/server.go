@@ -134,7 +134,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 	scopedIdempotencyKey := scopedIdempotencyKey(req.IdempotencyKey, req.DealershipID, req.SourceURL)
 	if existing, err := s.store.FindByIdempotency(r.Context(), scopedIdempotencyKey); err == nil {
 		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
-			writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "resultId": existing.ResultID, "result": existing})
+			writeJSON(w, http.StatusOK, resultResponse(existing))
 			return
 		}
 	}
@@ -148,7 +148,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedIdempotencyKey}
+	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedIdempotencyKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
@@ -202,6 +202,28 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	}
 	var finalRecord model.ScrapeResult
 	var finalDur float64
+	runStarted := time.Now().UTC()
+	progressMu := sync.Mutex{}
+	writeProgress := func(stage string, count int, attempt int) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		record := model.ScrapeResult{
+			ResultID:       resultID,
+			DealershipID:   dealershipID,
+			SourceURL:      sourceURL,
+			Status:         model.RunStatusRunning,
+			StartedAt:      runStarted,
+			TotalItems:     count,
+			SuccessItems:   count,
+			AttemptCount:   attempt,
+			IdempotencyKey: idempotencyKey,
+			ProgressStage:  stage,
+			IsRetrying:     false,
+		}
+		if err := s.store.UpsertResult(context.Background(), record); err != nil {
+			s.logger.Error("result progress upsert failed", zap.String("resultId", resultID), zap.String("stage", stage), zap.Error(err))
+		}
+	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		start := time.Now().UTC()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -209,6 +231,9 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			DealershipID:    dealershipID,
 			SourceURL:       sourceURL,
 			BrowserStrategy: "rod_first",
+			Progress: func(progress scrape.Progress) {
+				writeProgress(progress.Stage, progress.TotalItems, attempt)
+			},
 		}
 		if opts != nil {
 			if strings.TrimSpace(opts.BrowserStrategy) != "" {
@@ -225,6 +250,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		result := s.scraper.ScrapeOnceWithOptions(ctx, sourceURL, site, scrapeOpts)
 		cancel()
 		finalDur = time.Since(start).Seconds()
+		inventoryCount := model.InventoryCount(result.Items)
 
 		record := model.ScrapeResult{
 			ResultID:       resultID,
@@ -233,8 +259,8 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			Status:         model.RunStatusSuccess,
 			StartedAt:      start,
 			FinishedAt:     time.Now().UTC(),
-			TotalItems:     len(result.Items),
-			SuccessItems:   len(result.Items),
+			TotalItems:     inventoryCount,
+			SuccessItems:   inventoryCount,
 			FailedItems:    0,
 			ErrorCount:     len(result.Errors),
 			AttemptCount:   attempt,
@@ -242,11 +268,15 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			Items:          result.Items,
 			Errors:         result.Errors,
 			IsRetrying:     false,
+			ProgressStage:  "completed",
 		}
 		if len(result.Errors) > 0 {
 			record.Status = model.RunStatusPartial
 		}
 		record.LastError = firstErrorMessage(result.Errors)
+		if record.Status == model.RunStatusPartial {
+			record.ProgressStage = "completed_with_errors"
+		}
 		finalRecord = record
 
 		retryable := isRetryableScrapeFailure(result)
@@ -257,6 +287,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		wait := time.Duration(backoffBase*(1<<(attempt-1))) * time.Second
 		record.IsRetrying = true
 		record.NextRetryAt = time.Now().UTC().Add(wait)
+		record.ProgressStage = "retry_wait"
 		if err := s.store.UpsertResult(context.Background(), record); err != nil {
 			s.logger.Error("result store upsert failed", zap.String("resultId", resultID), zap.Error(err))
 			return
@@ -270,8 +301,8 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	}
 	s.metrics.RunsTotal.WithLabelValues(string(finalRecord.Status)).Inc()
 	s.metrics.RunDuration.WithLabelValues(dealershipID).Observe(finalDur)
-	s.metrics.ItemsScraped.WithLabelValues(dealershipID).Add(float64(len(finalRecord.Items)))
-	s.logger.Info("scrape completed", zap.String("resultId", resultID), zap.Int("attempts", finalRecord.AttemptCount), zap.Int("items", len(finalRecord.Items)), zap.Int("errors", len(finalRecord.Errors)))
+	s.metrics.ItemsScraped.WithLabelValues(dealershipID).Add(float64(finalRecord.TotalItems))
+	s.logger.Info("scrape completed", zap.String("resultId", resultID), zap.Int("attempts", finalRecord.AttemptCount), zap.Int("items", len(finalRecord.Items)), zap.Int("uniqueVinCount", finalRecord.TotalItems), zap.Int("errors", len(finalRecord.Errors)))
 }
 
 func firstErrorMessage(errs []model.StructuredError) string {
@@ -321,7 +352,38 @@ func (s *Server) handleGetResult(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "result": result})
+	writeJSON(w, http.StatusOK, resultResponse(result))
+}
+
+func resultResponse(result model.ScrapeResult) map[string]any {
+	scrapedCount := result.TotalItems
+	uniqueIdentityCount := model.InventoryIdentityCount(result.Items)
+	if uniqueIdentityCount > 0 {
+		scrapedCount = uniqueIdentityCount
+	} else if scrapedCount == 0 && len(result.Items) > 0 {
+		scrapedCount = len(result.Items)
+	}
+	if result.Status == model.RunStatusRunning {
+		return map[string]any{
+			"status":                "ok",
+			"resultStatus":          result.Status,
+			"progressStage":         result.ProgressStage,
+			"scrapedInventoryCount": scrapedCount,
+			"totalItems":            scrapedCount,
+		}
+	}
+	return map[string]any{
+		"status":                "ok",
+		"resultId":              result.ResultID,
+		"resultStatus":          result.Status,
+		"progressStage":         result.ProgressStage,
+		"scrapedInventoryCount": scrapedCount,
+		"totalItems":            scrapedCount,
+		"successItems":          result.SuccessItems,
+		"failedItems":           result.FailedItems,
+		"errorCount":            result.ErrorCount,
+		"result":                result,
+	}
 }
 
 func (s *Server) handleClearResults(w http.ResponseWriter, r *http.Request) {

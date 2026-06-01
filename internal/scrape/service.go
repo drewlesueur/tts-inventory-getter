@@ -36,10 +36,13 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 }
 
 func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
+	reportProgress(opts, "started", 0)
 	firstHTML, renderErr := s.fetchListHTML(ctx, sourceURL, site, opts.BrowserStrategy)
 	if renderErr != nil {
+		reportProgress(opts, "render_failed", 0)
 		return RunResult{Errors: []model.StructuredError{{Code: "SCRAPE_RENDER_FAILED", Message: renderErr.Error()}}}
 	}
+	reportProgress(opts, "list_fetched", countCards(firstHTML, site.ListPage.CardSelector))
 	detectedTotal := detectInventoryTotal(firstHTML, site)
 	effectiveMaxItems := effectiveMaxItems(site.ListPage.MaxItems, detectedTotal)
 	if s.Logger != nil {
@@ -51,7 +54,8 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			zap.String("cardSelector", site.ListPage.CardSelector),
 		)
 	}
-	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy)
+	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy, opts)
+	reportProgress(opts, "pages_collected", countCollectedCards(pages, site.ListPage.CardSelector))
 
 	allItems := make([]model.InventoryItem, 0)
 	errs := make([]model.StructuredError, 0, len(pageErrs))
@@ -70,9 +74,11 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			}
 			allItems = append(allItems, items...)
 			errs = append(errs, e...)
+			reportItemsProgress(opts, "items_extracted", allItems)
 		}
 		if effectiveMaxItems > 0 && len(allItems) >= effectiveMaxItems {
 			allItems = allItems[:effectiveMaxItems]
+			reportItemsProgress(opts, "items_limited", allItems)
 			break
 		}
 	}
@@ -81,6 +87,7 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
 	}
 	allItems = Dedupe(allItems)
+	reportItemsProgress(opts, "items_deduped", allItems)
 	if len(allItems) > 0 {
 		filteredErrs := make([]model.StructuredError, 0, len(errs))
 		for _, e := range errs {
@@ -114,17 +121,21 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			defer mu.Unlock()
 			if err != nil {
 				errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: err.Error(), ItemURL: allItems[i].URL})
+				reportItemsProgress(opts, "details_progress", allItems)
 				return
 			}
 			allItems[i] = item
+			reportItemsProgress(opts, "details_progress", allItems)
 		}(idx)
 	}
 	wg.Wait()
+	reportItemsProgress(opts, "details_completed", allItems)
 	for i := range allItems {
 		allItems[i] = NormalizeItem(sourceURL, allItems[i])
 		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
 	}
 	allItems = Dedupe(allItems)
+	reportItemsProgress(opts, "details_deduped", allItems)
 
 	if opts.EnableAIEnrichment && s.AIEnricher != nil {
 		for i := range allItems {
@@ -133,14 +144,28 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 				continue
 			}
 			allItems[i] = applyItemAliases(NormalizeItem(sourceURL, enriched), opts.DealershipID, opts.SourceURL)
+			reportItemsProgress(opts, "ai_progress", allItems)
 		}
 		allItems = Dedupe(allItems)
+		reportItemsProgress(opts, "ai_completed", allItems)
 	}
 
 	if len(allItems) == 0 {
 		errs = append(errs, model.StructuredError{Code: "NO_ITEMS", Message: fmt.Sprintf("no inventory found for %s", sourceURL)})
 	}
+	reportItemsProgress(opts, "completed", allItems)
 	return RunResult{Items: allItems, Errors: errs}
+}
+
+func reportItemsProgress(opts Options, stage string, items []model.InventoryItem) {
+	reportProgress(opts, stage, model.InventoryCount(items))
+}
+
+func reportProgress(opts Options, stage string, totalItems int) {
+	if opts.Progress == nil {
+		return
+	}
+	opts.Progress(Progress{Stage: stage, TotalItems: totalItems})
 }
 
 type scrapedPageHTML struct {
@@ -218,7 +243,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	return html, nil
 }
 
-func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML string, site config.SiteConfig, maxItems int, strategy string) ([]scrapedPageHTML, []model.StructuredError) {
+func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML string, site config.SiteConfig, maxItems int, strategy string, opts Options) ([]scrapedPageHTML, []model.StructuredError) {
 	maxPages := site.ListPage.Pagination.MaxPages
 	if maxPages <= 0 {
 		maxPages = 20
@@ -239,6 +264,7 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 		)
 	}
 	pages := []scrapedPageHTML{{url: sourceURL, html: firstHTML}}
+	reportProgress(opts, "pages_collected", countCollectedCards(pages, site.ListPage.CardSelector))
 	if maxPages == 1 {
 		return pages, nil
 	}
@@ -284,6 +310,7 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 			}
 			seen[nextURL] = struct{}{}
 			pages = append(pages, scrapedPageHTML{url: nextURL, html: h})
+			reportProgress(opts, "pages_collected", countCollectedCards(pages, site.ListPage.CardSelector))
 			if s.Logger != nil {
 				s.Logger.Info("pagination page collected", zap.String("nextUrl", nextURL), zap.Int("pagesCollected", len(pages)))
 			}
@@ -291,6 +318,17 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 		idx++
 	}
 	return pages, errs
+}
+
+func countCollectedCards(pages []scrapedPageHTML, selector string) int {
+	if selector == "" {
+		return 0
+	}
+	total := 0
+	for _, page := range pages {
+		total += countCards(page.html, selector)
+	}
+	return total
 }
 
 func countCards(html, selector string) int {

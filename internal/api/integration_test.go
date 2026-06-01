@@ -174,6 +174,157 @@ func TestScrapeOnceEndpoint_IdempotencyDoesNotReuseAcrossDifferentSourceURL(t *t
 	}
 }
 
+func TestGetResultEndpointIncludesScrapedInventoryCount(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	mem := store.NewMemoryResultStore()
+	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:      "result-1",
+		DealershipID:  "dealer-1",
+		SourceURL:     "https://dealer.test/inventory",
+		Status:        model.RunStatusSuccess,
+		StartedAt:     time.Now().UTC(),
+		FinishedAt:    time.Now().UTC(),
+		TotalItems:    2,
+		SuccessItems:  2,
+		ProgressStage: "completed",
+		Items: []model.InventoryItem{
+			{StockID: "A1", Title: "Car A"},
+			{StockID: "B2", Title: "Car B"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/results/result-1", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ResultID              string `json:"resultId"`
+		ResultStatus          string `json:"resultStatus"`
+		ProgressStage         string `json:"progressStage"`
+		ScrapedInventoryCount int    `json:"scrapedInventoryCount"`
+		TotalItems            int    `json:"totalItems"`
+		Result                struct {
+			TotalItems int `json:"totalItems"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if resp.ResultID != "result-1" || resp.ResultStatus != string(model.RunStatusSuccess) {
+		t.Fatalf("unexpected response identity/status: %#v", resp)
+	}
+	if resp.ProgressStage != "completed" {
+		t.Fatalf("expected progressStage=completed, got %#v", resp)
+	}
+	if resp.ScrapedInventoryCount != 2 || resp.TotalItems != 2 || resp.Result.TotalItems != 2 {
+		t.Fatalf("expected scraped inventory count 2, got %#v", resp)
+	}
+}
+
+func TestGetResultEndpointCountsUniqueVINs(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	mem := store.NewMemoryResultStore()
+	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:      "result-vins",
+		DealershipID:  "dealer-1",
+		SourceURL:     "https://dealer.test/inventory",
+		Status:        model.RunStatusSuccess,
+		StartedAt:     time.Now().UTC(),
+		FinishedAt:    time.Now().UTC(),
+		TotalItems:    3,
+		SuccessItems:  3,
+		ProgressStage: "completed",
+		Items: []model.InventoryItem{
+			{StockID: "A1", VIN: "5FRYD4H95GB010521", Title: "Car A"},
+			{StockID: "A2", VIN: "5fryd4h95gb010521", Title: "Car A duplicate"},
+			{StockID: "B1", VIN: "1HGCM82633A123456", Title: "Car B"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/results/result-vins", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ScrapedInventoryCount int `json:"scrapedInventoryCount"`
+		TotalItems            int `json:"totalItems"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if resp.ScrapedInventoryCount != 2 || resp.TotalItems != 2 {
+		t.Fatalf("expected unique VIN count 2, got %#v", resp)
+	}
+}
+
+func TestGetResultEndpointReturnsMinimalCountStructureWhileRunning(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	mem := store.NewMemoryResultStore()
+	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:      "running-result",
+		DealershipID:  "dealer-1",
+		SourceURL:     "https://dealer.test/inventory",
+		Status:        model.RunStatusRunning,
+		StartedAt:     time.Now().UTC(),
+		TotalItems:    34,
+		SuccessItems:  34,
+		AttemptCount:  1,
+		ProgressStage: "pages_collected",
+	})
+	if err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-result", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ResultStatus          string `json:"resultStatus"`
+		ProgressStage         string `json:"progressStage"`
+		ScrapedInventoryCount int    `json:"scrapedInventoryCount"`
+		TotalItems            int    `json:"totalItems"`
+		Progress              any    `json:"progress"`
+		Result                any    `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if resp.ResultStatus != string(model.RunStatusRunning) || resp.ProgressStage != "pages_collected" {
+		t.Fatalf("unexpected running status/stage: %#v", resp)
+	}
+	if resp.ScrapedInventoryCount != 34 || resp.TotalItems != 34 {
+		t.Fatalf("expected running progress count 34, got %#v", resp)
+	}
+	if resp.Progress != nil || resp.Result != nil {
+		t.Fatalf("expected minimal running response without progress/result objects, got %#v", resp)
+	}
+}
+
 func TestDailyUpsertCronEndpointTriggersConfiguredJob(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
 	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)

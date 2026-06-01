@@ -76,3 +76,32 @@ func TestScrapeOnce_DedupesRelativeAndAbsoluteURLs(t *testing.T) {
 		t.Fatalf("unexpected normalized URL: %s", res.Items[0].URL)
 	}
 }
+
+func TestScrapeOnce_ReportsProgressCounts(t *testing.T) {
+	s := Service{
+		Fetcher:     staticFetcher{html: "<html></html>"},
+		Extractors:  []Extractor{duplicateURLExtractor{}},
+		Concurrency: 1,
+	}
+	progress := make([]Progress, 0)
+	res := s.ScrapeOnceWithOptions(context.Background(), "https://dealer.test/inventory", config.SiteConfig{}, Options{
+		Progress: func(p Progress) {
+			progress = append(progress, p)
+		},
+	})
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 unique item, got %d", len(res.Items))
+	}
+	var sawExtracted, sawCompleted bool
+	for _, p := range progress {
+		if p.Stage == "items_extracted" && p.TotalItems == 2 {
+			sawExtracted = true
+		}
+		if p.Stage == "completed" && p.TotalItems == 1 {
+			sawCompleted = true
+		}
+	}
+	if !sawExtracted || !sawCompleted {
+		t.Fatalf("expected extracted and completed progress counts, got %#v", progress)
+	}
+}
