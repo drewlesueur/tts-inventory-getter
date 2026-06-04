@@ -17,6 +17,9 @@ func TestInventoryCountPrefersUniqueVINs(t *testing.T) {
 	if got := InventoryIdentityCount(items); got != 2 {
 		t.Fatalf("expected identity count to prefer unique VIN keys, got %d", got)
 	}
+	if got := ScrapedInventoryCount(items); got != 2 {
+		t.Fatalf("expected scraped count to prefer unique VINs, got %d", got)
+	}
 }
 
 func TestInventoryCountUsesUniqueStockIDsWithoutVINs(t *testing.T) {
@@ -34,6 +37,23 @@ func TestInventoryCountUsesUniqueStockIDsWithoutVINs(t *testing.T) {
 	if got := InventoryCount(items); got != 2 {
 		t.Fatalf("expected stock ID identity count, got %d", got)
 	}
+	if got := ScrapedInventoryCount(items); got != 2 {
+		t.Fatalf("expected scraped count to fall back to stock IDs, got %d", got)
+	}
+}
+
+func TestScrapedInventoryCountUsesOnlyVINsWhenPresent(t *testing.T) {
+	items := []InventoryItem{
+		{StockID: "A1", VIN: "5FRYD4H95GB010521"},
+		{StockID: "A2", VIN: "5fryd4h95gb010521"},
+		{StockID: "B1"},
+	}
+	if got := InventoryCount(items); got != 2 {
+		t.Fatalf("expected identity count to include stock fallback, got %d", got)
+	}
+	if got := ScrapedInventoryCount(items); got != 1 {
+		t.Fatalf("expected scraped count to use unique VIN map, got %d", got)
+	}
 }
 
 func TestInventoryCountFallsBackToItemCountWithoutIdentifiers(t *testing.T) {
@@ -46,5 +66,8 @@ func TestInventoryCountFallsBackToItemCountWithoutIdentifiers(t *testing.T) {
 	}
 	if got := InventoryCount(items); got != 2 {
 		t.Fatalf("expected item count fallback without identifiers, got %d", got)
+	}
+	if got := ScrapedInventoryCount(items); got != 2 {
+		t.Fatalf("expected scraped count fallback without identifiers, got %d", got)
 	}
 }

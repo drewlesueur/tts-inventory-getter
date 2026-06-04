@@ -158,7 +158,7 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 }
 
 func reportItemsProgress(opts Options, stage string, items []model.InventoryItem) {
-	reportProgress(opts, stage, model.InventoryCount(items))
+	reportProgress(opts, stage, model.ScrapedInventoryCount(items))
 }
 
 func reportProgress(opts Options, stage string, totalItems int) {

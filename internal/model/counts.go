@@ -30,6 +30,13 @@ func InventoryCount(items []InventoryItem) int {
 	return len(items)
 }
 
+func ScrapedInventoryCount(items []InventoryItem) int {
+	if count := InventoryCountByUniqueVIN(items); count > 0 {
+		return count
+	}
+	return InventoryCount(items)
+}
+
 func uniqueInventoryIdentities(items []InventoryItem) map[string]struct{} {
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {

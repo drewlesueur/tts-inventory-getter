@@ -275,7 +275,7 @@ func TestGetResultEndpointCountsUniqueVINs(t *testing.T) {
 	}
 }
 
-func TestGetResultEndpointReturnsMinimalCountStructureWhileRunning(t *testing.T) {
+func TestGetResultEndpointHidesUnstableDiscoveryCountWhileRunning(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
 	mem := store.NewMemoryResultStore()
 	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
@@ -317,11 +317,101 @@ func TestGetResultEndpointReturnsMinimalCountStructureWhileRunning(t *testing.T)
 	if resp.ResultStatus != string(model.RunStatusRunning) || resp.ProgressStage != "pages_collected" {
 		t.Fatalf("unexpected running status/stage: %#v", resp)
 	}
-	if resp.ScrapedInventoryCount != 34 || resp.TotalItems != 34 {
-		t.Fatalf("expected running progress count 34, got %#v", resp)
+	if resp.ScrapedInventoryCount != 0 || resp.TotalItems != 0 {
+		t.Fatalf("expected unstable discovery count to be hidden, got %#v", resp)
 	}
 	if resp.Progress != nil || resp.Result != nil {
 		t.Fatalf("expected minimal running response without progress/result objects, got %#v", resp)
+	}
+}
+
+func TestGetResultEndpointReturnsStableDedupedCountWhileRunning(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	mem := store.NewMemoryResultStore()
+	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:      "running-deduped-result",
+		DealershipID:  "dealer-1",
+		SourceURL:     "https://dealer.test/inventory",
+		Status:        model.RunStatusRunning,
+		StartedAt:     time.Now().UTC(),
+		TotalItems:    27,
+		SuccessItems:  27,
+		AttemptCount:  1,
+		ProgressStage: "items_deduped",
+	})
+	if err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-deduped-result", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ResultStatus          string `json:"resultStatus"`
+		ProgressStage         string `json:"progressStage"`
+		ScrapedInventoryCount int    `json:"scrapedInventoryCount"`
+		TotalItems            int    `json:"totalItems"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if resp.ResultStatus != string(model.RunStatusRunning) || resp.ProgressStage != "items_deduped" {
+		t.Fatalf("unexpected running status/stage: %#v", resp)
+	}
+	if resp.ScrapedInventoryCount != 27 || resp.TotalItems != 27 {
+		t.Fatalf("expected stable deduped count 27, got %#v", resp)
+	}
+}
+
+func TestGetResultEndpointHidesDetailsProgressCountWhileRunning(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
+	mem := store.NewMemoryResultStore()
+	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:      "running-details-result",
+		DealershipID:  "dealer-1",
+		SourceURL:     "https://dealer.test/inventory",
+		Status:        model.RunStatusRunning,
+		StartedAt:     time.Now().UTC(),
+		TotalItems:    78,
+		SuccessItems:  78,
+		AttemptCount:  1,
+		ProgressStage: "details_progress",
+	})
+	if err != nil {
+		t.Fatalf("seed upsert failed: %v", err)
+	}
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	r := server.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-details-result", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ResultStatus          string `json:"resultStatus"`
+		ProgressStage         string `json:"progressStage"`
+		ScrapedInventoryCount int    `json:"scrapedInventoryCount"`
+		TotalItems            int    `json:"totalItems"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if resp.ResultStatus != string(model.RunStatusRunning) || resp.ProgressStage != "details_progress" {
+		t.Fatalf("unexpected running status/stage: %#v", resp)
+	}
+	if resp.ScrapedInventoryCount != 0 || resp.TotalItems != 0 {
+		t.Fatalf("expected details progress count to be hidden, got %#v", resp)
 	}
 }
 

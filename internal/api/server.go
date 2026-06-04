@@ -207,6 +207,9 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	writeProgress := func(stage string, count int, attempt int) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
+		if !isStableInventoryCountStage(stage) {
+			count = 0
+		}
 		record := model.ScrapeResult{
 			ResultID:       resultID,
 			DealershipID:   dealershipID,
@@ -250,7 +253,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		result := s.scraper.ScrapeOnceWithOptions(ctx, sourceURL, site, scrapeOpts)
 		cancel()
 		finalDur = time.Since(start).Seconds()
-		inventoryCount := model.InventoryCount(result.Items)
+		inventoryCount := model.ScrapedInventoryCount(result.Items)
 
 		record := model.ScrapeResult{
 			ResultID:       resultID,
@@ -357,13 +360,16 @@ func (s *Server) handleGetResult(w http.ResponseWriter, r *http.Request) {
 
 func resultResponse(result model.ScrapeResult) map[string]any {
 	scrapedCount := result.TotalItems
-	uniqueIdentityCount := model.InventoryIdentityCount(result.Items)
-	if uniqueIdentityCount > 0 {
-		scrapedCount = uniqueIdentityCount
+	computedScrapedCount := model.ScrapedInventoryCount(result.Items)
+	if computedScrapedCount > 0 {
+		scrapedCount = computedScrapedCount
 	} else if scrapedCount == 0 && len(result.Items) > 0 {
 		scrapedCount = len(result.Items)
 	}
 	if result.Status == model.RunStatusRunning {
+		if !isStableInventoryCountStage(result.ProgressStage) {
+			scrapedCount = 0
+		}
 		return map[string]any{
 			"status":                "ok",
 			"resultStatus":          result.Status,
@@ -383,6 +389,15 @@ func resultResponse(result model.ScrapeResult) map[string]any {
 		"failedItems":           result.FailedItems,
 		"errorCount":            result.ErrorCount,
 		"result":                result,
+	}
+}
+
+func isStableInventoryCountStage(stage string) bool {
+	switch stage {
+	case "items_deduped", "details_completed", "details_deduped", "ai_progress", "ai_completed", "completed":
+		return true
+	default:
+		return false
 	}
 }
 
