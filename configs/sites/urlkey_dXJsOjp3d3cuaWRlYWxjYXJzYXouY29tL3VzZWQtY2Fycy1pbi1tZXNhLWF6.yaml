@@ -31,4 +31,4 @@ regex:
     vin:
         - \\b([A-HJ-NPR-Z0-9]{17})\\b
 discovery:
-    discoveredAt: "2026-05-19T22:19:10Z"
+    discoveredAt: "2026-06-12T14:54:22Z"

@@ -51,15 +51,15 @@ Returns persisted scrape result (status, items, errors) from SQLite.
 ### `DELETE /v1/results`
 Clears every row in the `scrape_results` table. Requires `X-Service-Key`.
 
-### `POST /v1/manual-load/daily-upsert`
-Manual fallback load for when the daily cron did not run or did not load inventory. It starts the same full inventory upsert pipeline used by the daily cron. Requires `X-Service-Key`.
+### `POST /v1/scrape/daily-upsert`
+Manual trigger for the same full inventory upsert pipeline used by the daily cron. Requires `X-Service-Key`.
 
 Response:
 ```json
 { "status": "accepted", "job": "daily-upsert", "jobId": "..." }
 ```
 
-`POST /v1/cron/daily-upsert` is also supported as an alias.
+`POST /v1/manual-load/daily-upsert` and `POST /v1/cron/daily-upsert` are also supported as aliases.
 
 ### `GET /healthz`
 Liveness.

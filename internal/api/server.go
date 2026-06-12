@@ -62,6 +62,7 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
 	v1.HandleFunc("DELETE /v1/site-config-cache", s.handleClearSiteConfigCache)
 	v1.HandleFunc("POST /v1/scrape/discover-flow", s.handleDiscover)
+	v1.HandleFunc("POST /v1/scrape/daily-upsert", s.handleDailyUpsertCron)
 	v1.HandleFunc("POST /v1/cron/daily-upsert", s.handleDailyUpsertCron)
 	v1.HandleFunc("POST /v1/manual-load/daily-upsert", s.handleDailyUpsertCron)
 

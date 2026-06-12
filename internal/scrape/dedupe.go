@@ -2,10 +2,13 @@ package scrape
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
+
+var priceOnlyTitleRe = regexp.MustCompile(`^\$?\s*\d[\d,]*(?:\.\d{2})?$`)
 
 func Dedupe(items []model.InventoryItem) []model.InventoryItem {
 	seen := make(map[string]int, len(items))
@@ -29,7 +32,7 @@ func mergeInventoryItem(base, cand model.InventoryItem) model.InventoryItem {
 	if base.URL == "" {
 		base.URL = cand.URL
 	}
-	if base.Title == "" {
+	if base.Title == "" || (looksLikePriceOnlyTitle(base.Title) && !looksLikePriceOnlyTitle(cand.Title)) {
 		base.Title = cand.Title
 	}
 	if base.Year == "" {
@@ -136,6 +139,14 @@ func mergeInventoryItem(base, cand model.InventoryItem) model.InventoryItem {
 		base.PrimaryImage = base.Images[0]
 	}
 	return base
+}
+
+func looksLikePriceOnlyTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return false
+	}
+	return priceOnlyTitleRe.MatchString(title)
 }
 
 func dedupeKey(it model.InventoryItem) string {

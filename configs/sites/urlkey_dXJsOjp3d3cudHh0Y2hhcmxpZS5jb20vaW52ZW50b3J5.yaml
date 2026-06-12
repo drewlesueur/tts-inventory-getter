@@ -20,7 +20,6 @@ listPage:
         clickMaxAttempts: 0
 detailPage:
     imageSelectors:
-        - .e-gallery-image[data-thumbnail]
         - .gallery img
         - img[data-src]
         - img[src*='vehicle']
@@ -32,4 +31,4 @@ regex:
     vin:
         - \\b([A-HJ-NPR-Z0-9]{17})\\b
 discovery:
-    discoveredAt: "2026-05-19T22:16:08Z"
+    discoveredAt: "2026-06-12T14:32:32Z"

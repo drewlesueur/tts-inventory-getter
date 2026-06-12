@@ -54,3 +54,18 @@ func TestDedupe_PrefersStockKeyOverVINToMergeVariants(t *testing.T) {
 		t.Fatalf("expected merged images from both variants, got %d", len(out[0].Images))
 	}
 }
+
+func TestDedupe_ReplacesPriceOnlyTitleWithVehicleTitle(t *testing.T) {
+	items := []model.InventoryItem{
+		{StockID: "7026", Title: "$666,399", Price: "$666,399", URL: "https://dealer.test/vehicle-details/2024-lamborghini-revuelto-7026/"},
+		{StockID: "7026", Title: "2024 Lamborghini Revuelto", URL: "https://dealer.test/vehicle-details/2024-lamborghini-revuelto-7026/"},
+	}
+
+	out := Dedupe(items)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 unique item, got %d", len(out))
+	}
+	if out[0].Title != "2024 Lamborghini Revuelto" {
+		t.Fatalf("expected vehicle title to replace price title, got %q", out[0].Title)
+	}
+}
