@@ -18,6 +18,7 @@ import (
 	"github.com/drewlesueur/tts-inventory-getter/internal/auth"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 	"github.com/drewlesueur/tts-inventory-getter/internal/discovery"
+	"github.com/drewlesueur/tts-inventory-getter/internal/inventoryapi"
 	"github.com/drewlesueur/tts-inventory-getter/internal/metrics"
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 	"github.com/drewlesueur/tts-inventory-getter/internal/scrape"
@@ -26,21 +27,22 @@ import (
 )
 
 type Server struct {
-	cfg      config.Config
-	logger   *zap.Logger
-	scraper  scrape.Service
-	sites    config.Loader
-	store    store.ResultStore
-	metrics  *metrics.Metrics
-	discover *discovery.Client
+	cfg       config.Config
+	logger    *zap.Logger
+	scraper   scrape.Service
+	sites     config.Loader
+	store     store.ResultStore
+	metrics   *metrics.Metrics
+	discover  *discovery.Client
+	invClient *inventoryapi.Client
 
 	dailyUpsertMu      sync.Mutex
 	dailyUpsertRunning bool
 	dailyUpsertJob     func()
 }
 
-func NewServer(cfg config.Config, logger *zap.Logger, scraper scrape.Service, sites config.Loader, st store.ResultStore, mt *metrics.Metrics, discover *discovery.Client) *Server {
-	return &Server{cfg: cfg, logger: logger, scraper: scraper, sites: sites, store: st, metrics: mt, discover: discover}
+func NewServer(cfg config.Config, logger *zap.Logger, scraper scrape.Service, sites config.Loader, st store.ResultStore, mt *metrics.Metrics, discover *discovery.Client, invClient *inventoryapi.Client) *Server {
+	return &Server{cfg: cfg, logger: logger, scraper: scraper, sites: sites, store: st, metrics: mt, discover: discover, invClient: invClient}
 }
 
 func (s *Server) SetDailyUpsertJob(job func()) {
@@ -65,6 +67,7 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("POST /v1/scrape/daily-upsert", s.handleDailyUpsertCron)
 	v1.HandleFunc("POST /v1/cron/daily-upsert", s.handleDailyUpsertCron)
 	v1.HandleFunc("POST /v1/manual-load/daily-upsert", s.handleDailyUpsertCron)
+	v1.HandleFunc("POST /v1/taptosign/upsert", s.handleTapToSignUpsert)
 
 	protected := chain(v1,
 		auth.APIKeyMiddleware(s.cfg.ServiceKey),
@@ -76,6 +79,40 @@ func (s *Server) Router() http.Handler {
 
 	mux.Handle("/v1/", protected)
 	return mux
+}
+
+func (s *Server) handleTapToSignUpsert(w http.ResponseWriter, r *http.Request) {
+	if s.invClient == nil {
+		writeJSON(w, http.StatusServiceUnavailable, model.ErrorResponse("INVENTORY_API_NOT_CONFIGURED", "inventory api client is not configured"))
+		return
+	}
+	var req TapToSignUpsertRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	if req.AccountID == "" || req.DealershipID == "" {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "accountId and dealershipId are required"))
+		return
+	}
+	items := make([]model.InventoryItem, 0, len(req.Items))
+	for _, it := range req.Items {
+		if it.StockID != "" {
+			items = append(items, it)
+		}
+	}
+	if len(items) == 0 {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "no valid items to upsert (items must have stockId)"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	if err := s.invClient.UpsertInventory(ctx, req.AccountID, req.DealershipID, items); err != nil {
+		s.logger.Error("taptosign upsert failed", zap.String("accountId", req.AccountID), zap.String("dealershipId", req.DealershipID), zap.Error(err))
+		writeJSON(w, http.StatusBadGateway, model.ErrorResponse("UPSERT_FAILED", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": len(items)})
 }
 
 func (s *Server) handleDailyUpsertCron(w http.ResponseWriter, _ *http.Request) {

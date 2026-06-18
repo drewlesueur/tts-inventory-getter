@@ -77,7 +77,7 @@ func main() {
 		logger.Info("site config cache warmed", zap.Int("count", n))
 	}
 	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL, ServiceKey: cfg.ServiceKey}
-	s := api.NewServer(cfg, logger, scraper, siteLoader, resultStore, m, discoverClient)
+	s := api.NewServer(cfg, logger, scraper, siteLoader, resultStore, m, discoverClient, invClient)
 	s.SetDailyUpsertJob(func() {
 		runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 	})

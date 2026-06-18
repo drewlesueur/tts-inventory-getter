@@ -1,51 +1,66 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type InventoryItem struct {
 	StockID           string   `json:"stockId"`
-	Stock             string   `json:"stock,omitempty"`
+	Stock             string   `json:"stock"`
 	URL               string   `json:"url"`
-	Website           string   `json:"website,omitempty"`
-	DealerID          string   `json:"dealerId,omitempty"`
+	Website           string   `json:"website"`
+	DealerID          string   `json:"dealerId"`
 	Title             string   `json:"title"`
-	Style             string   `json:"style,omitempty"`
-	Year              string   `json:"year,omitempty"`
-	Make              string   `json:"make,omitempty"`
-	Model             string   `json:"model,omitempty"`
-	Color             string   `json:"color,omitempty"`
-	VIN               string   `json:"vin,omitempty"`
-	PrimaryImage      string   `json:"primaryImage,omitempty"`
-	Images            []string `json:"images,omitempty"`
-	PhotoURLs         []string `json:"photoURLs,omitempty"`
-	Price             string   `json:"price,omitempty"`
-	VehicleListPrice  string   `json:"vehicleListPrice,omitempty"`
-	Mileage           string   `json:"mileage,omitempty"`
-	Engine            string   `json:"engine,omitempty"`
-	Cylinders         string   `json:"cylinders,omitempty"`
-	Horsepower        string   `json:"horsepower,omitempty"`
-	Torque            string   `json:"torque,omitempty"`
-	Transmission      string   `json:"transmission,omitempty"`
-	TransmissionType  string   `json:"transmissionType,omitempty"`
-	DriveType         string   `json:"driveType,omitempty"`
-	FuelType          string   `json:"fuelType,omitempty"`
-	FuelCapacity      string   `json:"fuelCapacity,omitempty"`
-	FuelEconomy       string   `json:"fuelEconomy,omitempty"`
-	MilesPerGallon    string   `json:"milesPerGallon,omitempty"`
-	MilesPerLiter     string   `json:"milesPerLiter,omitempty"`
-	CityMPG           string   `json:"cityMPG,omitempty"`
-	HighwayMPG        string   `json:"highwayMPG,omitempty"`
-	CityMPL           string   `json:"cityMPL,omitempty"`
-	HighwayMPL        string   `json:"highwayMPL,omitempty"`
-	BodyType          string   `json:"bodyType,omitempty"`
-	SeatInfo          string   `json:"seatInfo,omitempty"`
-	PassengerCapacity string   `json:"passengerCapacity,omitempty"`
-	TireInfo          string   `json:"tireInfo,omitempty"`
-	FrontTire         string   `json:"frontTire,omitempty"`
-	RearTire          string   `json:"rearTire,omitempty"`
-	WheelInfo         string   `json:"wheelInfo,omitempty"`
-	FrontWheel        string   `json:"frontWheel,omitempty"`
-	RearWheel         string   `json:"rearWheel,omitempty"`
+	Style             string   `json:"style"`
+	Year              string   `json:"year"`
+	Make              string   `json:"make"`
+	Model             string   `json:"model"`
+	Color             string   `json:"color"`
+	VIN               string   `json:"vin"`
+	PrimaryImage      string   `json:"primaryImage"`
+	Images            []string `json:"images"`
+	PhotoURLs         []string `json:"photoURLs"`
+	Price             string   `json:"price"`
+	VehicleListPrice  string   `json:"vehicleListPrice"`
+	Mileage           string   `json:"mileage"`
+	Engine            string   `json:"engine"`
+	Cylinders         string   `json:"cylinders"`
+	Horsepower        string   `json:"horsepower"`
+	Torque            string   `json:"torque"`
+	Transmission      string   `json:"transmission"`
+	TransmissionType  string   `json:"transmissionType"`
+	DriveType         string   `json:"driveType"`
+	FuelType          string   `json:"fuelType"`
+	FuelCapacity      string   `json:"fuelCapacity"`
+	FuelEconomy       string   `json:"fuelEconomy"`
+	MilesPerGallon    string   `json:"milesPerGallon"`
+	MilesPerLiter     string   `json:"milesPerLiter"`
+	CityMPG           string   `json:"cityMPG"`
+	HighwayMPG        string   `json:"highwayMPG"`
+	CityMPL           string   `json:"cityMPL"`
+	HighwayMPL        string   `json:"highwayMPL"`
+	BodyType          string   `json:"bodyType"`
+	SeatInfo          string   `json:"seatInfo"`
+	PassengerCapacity string   `json:"passengerCapacity"`
+	TireInfo          string   `json:"tireInfo"`
+	FrontTire         string   `json:"frontTire"`
+	RearTire          string   `json:"rearTire"`
+	WheelInfo         string   `json:"wheelInfo"`
+	FrontWheel        string   `json:"frontWheel"`
+	RearWheel         string   `json:"rearWheel"`
+}
+
+func (i InventoryItem) MarshalJSON() ([]byte, error) {
+	type inventoryItemAlias InventoryItem
+	out := inventoryItemAlias(i)
+	if out.Images == nil {
+		out.Images = []string{}
+	}
+	if out.PhotoURLs == nil {
+		out.PhotoURLs = []string{}
+	}
+	return json.Marshal(out)
 }
 
 type RunStatus string

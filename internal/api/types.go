@@ -1,6 +1,9 @@
 package api
 
-import "github.com/drewlesueur/tts-inventory-getter/internal/config"
+import (
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
+)
 
 type ScrapeOnceRequest struct {
 	DealershipID   string             `json:"dealershipId" binding:"required"`
@@ -25,4 +28,10 @@ type ScrapeOptions struct {
 type DiscoverFlowRequest struct {
 	DealershipID string `json:"dealershipId,omitempty"`
 	SourceURL    string `json:"sourceUrl" binding:"required,url"`
+}
+
+type TapToSignUpsertRequest struct {
+	AccountID    string               `json:"accountId"`
+	DealershipID string               `json:"dealershipId"`
+	Items        []model.InventoryItem `json:"items"`
 }
