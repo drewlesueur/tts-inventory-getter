@@ -1,9 +1,33 @@
+# Environment
 .env
+
+# Build output
 bin/
+
+# Node
 node_modules/
+package-lock.json
+
+# Logs
 *.log
+data/errors.log
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Go cache
 .gocache/
 .gomodcache/
+
+# Runtime data (SQLite, cookies, scraped results)
 data/
 *.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
+*.tmp
+*.swp
