@@ -18,6 +18,7 @@ import (
 type HTTPFetcher struct {
 	client       *http.Client
 	unsafeClient *http.Client
+	CookieStore  *CookieStore
 }
 
 func NewHTTPFetcher() *HTTPFetcher {
@@ -94,10 +95,10 @@ func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string
 		"upgrade-insecure-requests": []string{"1"},
 	}
 
-	// Run request with context cancellation support.
 	type result struct {
-		body string
-		err  error
+		body      string
+		newCookie string
+		err       error
 	}
 	ch := make(chan result, 1)
 	go func() {
@@ -111,14 +112,25 @@ func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string
 			ch <- result{err: fmt.Errorf("fetch failed status=%d", resp.StatusCode)}
 			return
 		}
+		// Capture refreshed datadome cookie from response headers.
+		var newCookie string
+		for _, sc := range resp.Header["Set-Cookie"] {
+			if strings.HasPrefix(sc, "datadome=") {
+				newCookie = strings.TrimPrefix(strings.SplitN(sc, ";", 2)[0], "datadome=")
+				break
+			}
+		}
 		b, err := io.ReadAll(resp.Body)
-		ch <- result{body: string(b), err: err}
+		ch <- result{body: string(b), newCookie: newCookie, err: err}
 	}()
 
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case r := <-ch:
+		if r.err == nil && r.newCookie != "" && f.CookieStore != nil {
+			_ = f.CookieStore.Set("datadome", r.newCookie)
+		}
 		return r.body, r.err
 	}
 }

@@ -19,9 +19,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// CookieStore is a thread-safe cookie map that persists to disk so updates
-// survive server restarts. PersistPath is optional; if empty, changes are
-// in-memory only.
+// CookieStore is a thread-safe cookie map.
+// On startup it reads from .env; if a persist file exists it takes precedence.
+// API updates are written to the persist file so they survive restarts.
 type CookieStore struct {
 	mu          sync.RWMutex
 	cookies     map[string]string
@@ -36,8 +36,8 @@ func NewCookieStore(initial map[string]string) *CookieStore {
 	return c
 }
 
-// LoadPersisted reads cookies from PersistPath (if it exists) and merges them,
-// with persisted values taking precedence over the initial map.
+// LoadPersisted merges the persist file over the initial map (file wins).
+// Call once at startup after setting PersistPath.
 func (c *CookieStore) LoadPersisted() error {
 	if c.PersistPath == "" {
 		return nil
@@ -61,30 +61,27 @@ func (c *CookieStore) LoadPersisted() error {
 	return nil
 }
 
-// Set updates a cookie in memory and persists to disk if PersistPath is set.
+// Set updates a cookie in memory and writes the full map to PersistPath.
 func (c *CookieStore) Set(name, value string) error {
 	c.mu.Lock()
 	c.cookies[name] = value
-	var snapshot map[string]string
-	if c.PersistPath != "" {
-		snapshot = make(map[string]string, len(c.cookies))
-		for k, v := range c.cookies {
-			snapshot[k] = v
-		}
+	snapshot := make(map[string]string, len(c.cookies))
+	for k, v := range c.cookies {
+		snapshot[k] = v
 	}
 	c.mu.Unlock()
 
-	if c.PersistPath != "" {
-		b, err := json.MarshalIndent(snapshot, "", "  ")
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(c.PersistPath), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(c.PersistPath, b, 0o644)
+	if c.PersistPath == "" {
+		return nil
 	}
-	return nil
+	b, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(c.PersistPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(c.PersistPath, b, 0o644)
 }
 
 func (c *CookieStore) Get() map[string]string {

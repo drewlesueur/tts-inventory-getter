@@ -48,24 +48,27 @@ func main() {
 		logger.Fatal("sqlite open failed", zap.Error(err))
 	}
 	defer resultStore.Close()
+
+	cookieStore := scrape.NewCookieStore(nil)
+	cookieStore.PersistPath = "data/cookies.json"
+	if cfg.DataDomeCookie != "" {
+		_ = cookieStore.Set("datadome", cfg.DataDomeCookie)
+	}
+	// Persist file takes precedence over .env — API updates survive restarts.
+	if err := cookieStore.LoadPersisted(); err != nil {
+		logger.Warn("cookie store load failed", zap.Error(err))
+	}
+	if cookieStore.Len() > 0 {
+		logger.Info("DataDome cookie ready", zap.Int("cookies", cookieStore.Len()))
+	}
+
 	httpFetcher := scrape.NewHTTPFetcherWithTimeout(time.Duration(cfg.HTTPFetchTimeoutSec) * time.Second)
+	httpFetcher.CookieStore = cookieStore
 	rodBrowser, cancelRod := scrape.NewRodBrowser(cfg.Headless)
 	defer cancelRod()
 	playwrightBrowser := scrape.NewPlaywrightBrowser(cfg.PlaywrightCommand)
 
 	activeFetcher := scrape.Fetcher(httpFetcher)
-
-	cookieStore := scrape.NewCookieStore(nil)
-	cookieStore.PersistPath = "data/cookies.json"
-	if cfg.DataDomeCookie != "" {
-		cookieStore.Set("datadome", cfg.DataDomeCookie) //nolint
-	}
-	// Persisted cookies override .env — last API-set value wins across restarts.
-	if err := cookieStore.LoadPersisted(); err != nil {
-		logger.Warn("cookie store load failed", zap.Error(err))
-	} else if cookieStore.Len() > 0 {
-		logger.Info("DataDome cookie loaded", zap.Int("count", cookieStore.Len()))
-	}
 
 	imageSizes := scrape.NewImageSizeCache()
 	scraper := scrape.Service{
