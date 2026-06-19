@@ -40,6 +40,7 @@ type Config struct {
 	DefaultMaxScrollAttempts   int
 	DefaultMaxLoadMoreClicks   int
 	DefaultMaxItems            int
+	DataDomeCookie             string
 }
 
 func Load() (Config, error) {
@@ -82,6 +83,7 @@ func Load() (Config, error) {
 		DefaultMaxScrollAttempts:   viper.GetInt("DEFAULT_MAX_SCROLL_ATTEMPTS"),
 		DefaultMaxLoadMoreClicks:   viper.GetInt("DEFAULT_MAX_LOAD_MORE_CLICKS"),
 		DefaultMaxItems:            viper.GetInt("DEFAULT_MAX_ITEMS"),
+		DataDomeCookie:             viper.GetString("DATADOME_COOKIE"),
 	}
 	if cfg.ServiceKey == "" {
 		return Config{}, fmt.Errorf("SERVICE_KEY is required")

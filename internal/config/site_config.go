@@ -19,6 +19,9 @@ type SiteConfig struct {
 	DetailPage DetailPageConfig  `yaml:"detailPage" json:"detailPage"`
 	Regex      RegexConfig       `yaml:"regex" json:"regex"`
 	Discovery  DiscoveryMetadata `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+	// ExtraCookies is runtime-only (not persisted). Used to inject session cookies
+	// like datadome into browser and HTTP fetcher requests.
+	ExtraCookies map[string]string `yaml:"-" json:"-"`
 }
 
 type ListPageConfig struct {

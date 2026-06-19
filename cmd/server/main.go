@@ -53,16 +53,31 @@ func main() {
 	defer cancelRod()
 	playwrightBrowser := scrape.NewPlaywrightBrowser(cfg.PlaywrightCommand)
 
+	activeFetcher := scrape.Fetcher(httpFetcher)
+
+	cookieStore := scrape.NewCookieStore(nil)
+	cookieStore.PersistPath = "data/cookies.json"
+	if cfg.DataDomeCookie != "" {
+		cookieStore.Set("datadome", cfg.DataDomeCookie) //nolint
+	}
+	// Persisted cookies override .env — last API-set value wins across restarts.
+	if err := cookieStore.LoadPersisted(); err != nil {
+		logger.Warn("cookie store load failed", zap.Error(err))
+	} else if cookieStore.Len() > 0 {
+		logger.Info("DataDome cookie loaded", zap.Int("count", cookieStore.Len()))
+	}
+
 	imageSizes := scrape.NewImageSizeCache()
 	scraper := scrape.Service{
-		Browser:       playwrightBrowser,
-		AltBrowser:    rodBrowser,
-		Fetcher:       httpFetcher,
-		DetailFetcher: scrape.HTMLDetailFetcher{Fetcher: httpFetcher, Browser: rodBrowser, ImageSizes: imageSizes},
-		Extractors:    []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
-		Concurrency:   cfg.Concurrency,
-		AIEnricher:    &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
-		Logger:        logger,
+		Browser:        playwrightBrowser,
+		AltBrowser:     rodBrowser,
+		Fetcher:        activeFetcher,
+		DetailFetcher:  scrape.HTMLDetailFetcher{Fetcher: activeFetcher, Browser: rodBrowser, ImageSizes: imageSizes},
+		Extractors:     []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
+		Concurrency:    cfg.Concurrency,
+		AIEnricher:     &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
+		Logger:         logger,
+		DefaultCookies: cookieStore,
 	}
 
 	m := metrics.New()
@@ -77,7 +92,7 @@ func main() {
 		logger.Info("site config cache warmed", zap.Int("count", n))
 	}
 	invClient := &inventoryapi.Client{BaseURL: cfg.InventoryAPIBaseURL, ServiceKey: cfg.ServiceKey}
-	s := api.NewServer(cfg, logger, scraper, siteLoader, resultStore, m, discoverClient, invClient)
+	s := api.NewServer(cfg, logger, scraper, siteLoader, resultStore, m, discoverClient, invClient, cookieStore)
 	s.SetDailyUpsertJob(func() {
 		runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 	})

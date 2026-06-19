@@ -9,6 +9,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	fhttp "github.com/bogdanfinn/fhttp"
+	tls_client "github.com/bogdanfinn/tls-client"
+	"github.com/bogdanfinn/tls-client/profiles"
 )
 
 type HTTPFetcher struct {
@@ -56,6 +60,69 @@ func (f *HTTPFetcher) FetchUnsafe(ctx context.Context, url string) (string, erro
 	return f.fetchWithClient(ctx, url, f.unsafeClient, false)
 }
 
+// FetchWithCookie uses a Chrome-impersonating TLS client so that DataDome
+// validates the cookie against a matching TLS fingerprint.
+func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	if err := rejectUnsafeURL(u); err != nil {
+		return "", err
+	}
+
+	tlsClient, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
+		tls_client.WithTimeoutSeconds(30),
+		tls_client.WithClientProfile(profiles.Chrome_120),
+	)
+	if err != nil {
+		return "", fmt.Errorf("tls client init: %w", err)
+	}
+
+	req, err := fhttp.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header = fhttp.Header{
+		"User-Agent":                []string{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+		"Accept":                    []string{"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"},
+		"Accept-Language":           []string{"en-US,en;q=0.9"},
+		"Cookie":                    []string{cookie},
+		"sec-fetch-dest":            []string{"document"},
+		"sec-fetch-mode":            []string{"navigate"},
+		"sec-fetch-site":            []string{"none"},
+		"upgrade-insecure-requests": []string{"1"},
+	}
+
+	// Run request with context cancellation support.
+	type result struct {
+		body string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		resp, err := tlsClient.Do(req)
+		if err != nil {
+			ch <- result{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			ch <- result{err: fmt.Errorf("fetch failed status=%d", resp.StatusCode)}
+			return
+		}
+		b, err := io.ReadAll(resp.Body)
+		ch <- result{body: string(b), err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		return r.body, r.err
+	}
+}
+
 func (f *HTTPFetcher) fetchWithClient(ctx context.Context, rawURL string, client *http.Client, enforceSafe bool) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -66,7 +133,14 @@ func (f *HTTPFetcher) fetchWithClient(ctx context.Context, rawURL string, client
 			return "", err
 		}
 	}
-	req.Header.Set("User-Agent", "inventory-scraper/1.0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

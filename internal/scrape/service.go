@@ -2,8 +2,11 @@ package scrape
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,15 +19,100 @@ import (
 	"go.uber.org/zap"
 )
 
+// CookieStore is a thread-safe cookie map that persists to disk so updates
+// survive server restarts. PersistPath is optional; if empty, changes are
+// in-memory only.
+type CookieStore struct {
+	mu          sync.RWMutex
+	cookies     map[string]string
+	PersistPath string
+}
+
+func NewCookieStore(initial map[string]string) *CookieStore {
+	c := &CookieStore{cookies: make(map[string]string)}
+	for k, v := range initial {
+		c.cookies[k] = v
+	}
+	return c
+}
+
+// LoadPersisted reads cookies from PersistPath (if it exists) and merges them,
+// with persisted values taking precedence over the initial map.
+func (c *CookieStore) LoadPersisted() error {
+	if c.PersistPath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(c.PersistPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	persisted := make(map[string]string)
+	if err := json.Unmarshal(b, &persisted); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, v := range persisted {
+		c.cookies[k] = v
+	}
+	return nil
+}
+
+// Set updates a cookie in memory and persists to disk if PersistPath is set.
+func (c *CookieStore) Set(name, value string) error {
+	c.mu.Lock()
+	c.cookies[name] = value
+	var snapshot map[string]string
+	if c.PersistPath != "" {
+		snapshot = make(map[string]string, len(c.cookies))
+		for k, v := range c.cookies {
+			snapshot[k] = v
+		}
+	}
+	c.mu.Unlock()
+
+	if c.PersistPath != "" {
+		b, err := json.MarshalIndent(snapshot, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(c.PersistPath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(c.PersistPath, b, 0o644)
+	}
+	return nil
+}
+
+func (c *CookieStore) Get() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]string, len(c.cookies))
+	for k, v := range c.cookies {
+		out[k] = v
+	}
+	return out
+}
+
+func (c *CookieStore) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.cookies)
+}
+
 type Service struct {
-	Browser       Browser
-	AltBrowser    Browser
-	Fetcher       Fetcher
-	DetailFetcher DetailFetcher
-	Extractors    []Extractor
-	Concurrency   int
-	AIEnricher    *AIEnricher
-	Logger        *zap.Logger
+	Browser        Browser
+	AltBrowser     Browser
+	Fetcher        Fetcher
+	DetailFetcher  DetailFetcher
+	Extractors     []Extractor
+	Concurrency    int
+	AIEnricher     *AIEnricher
+	Logger         *zap.Logger
+	DefaultCookies *CookieStore
 }
 
 type unsafeFetcher interface {
@@ -37,7 +125,16 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 
 func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
 	reportProgress(opts, "started", 0)
-	firstHTML, renderErr := s.fetchListHTML(ctx, sourceURL, site, opts.BrowserStrategy)
+	// Merge default cookies with per-request cookies (per-request takes precedence).
+	cookies := opts.Cookies
+	if s.DefaultCookies != nil && s.DefaultCookies.Len() > 0 {
+		merged := s.DefaultCookies.Get()
+		for k, v := range opts.Cookies {
+			merged[k] = v
+		}
+		cookies = merged
+	}
+	firstHTML, renderErr := s.fetchListHTML(ctx, sourceURL, site, opts.BrowserStrategy, cookies)
 	if renderErr != nil {
 		reportProgress(opts, "render_failed", 0)
 		return RunResult{Errors: []model.StructuredError{{Code: "SCRAPE_RENDER_FAILED", Message: renderErr.Error()}}}
@@ -54,7 +151,9 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			zap.String("cardSelector", site.ListPage.CardSelector),
 		)
 	}
-	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy, opts)
+	optsWithCookies := opts
+	optsWithCookies.Cookies = cookies
+	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy, optsWithCookies)
 	reportProgress(opts, "pages_collected", countCollectedCards(pages, site.ListPage.CardSelector))
 
 	allItems := make([]model.InventoryItem, 0)
@@ -173,7 +272,38 @@ type scrapedPageHTML struct {
 	html string
 }
 
-func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string) (string, error) {
+func cookieHeader(cookies map[string]string) string {
+	if len(cookies) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(cookies))
+	for k, v := range cookies {
+		parts = append(parts, k+"="+v)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string, cookies map[string]string) (string, error) {
+	// Cookie path: use Chrome-impersonating TLS fetch directly — no browser fallback.
+	if len(cookies) > 0 && s.Fetcher != nil {
+		if cf, ok := s.Fetcher.(interface {
+			FetchWithCookie(context.Context, string, string) (string, error)
+		}); ok {
+			html, err := cf.FetchWithCookie(ctx, pageURL, cookieHeader(cookies))
+			if err != nil {
+				return "", fmt.Errorf("cookie fetch failed: %w", err)
+			}
+			if isDataDomeChallenge(html) {
+				return "", fmt.Errorf("datadome challenge blocked: cookie may be expired — update DATADOME_COOKIE in .env")
+			}
+			if s.Logger != nil {
+				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "http_fetch_cookie"), zap.Int("cardCount", countCards(html, site.ListPage.CardSelector)))
+			}
+			return html, nil
+		}
+	}
+
+	// No cookies: try browsers then plain HTTP fallback.
 	var html string
 	var renderErr error
 	source := "none"
@@ -234,11 +364,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		if site.ListPage.CardSelector != "" {
 			cardCount = countCards(html, site.ListPage.CardSelector)
 		}
-		s.Logger.Info("list html source",
-			zap.String("url", pageURL),
-			zap.String("source", source),
-			zap.Int("cardCount", cardCount),
-		)
+		s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", source), zap.Int("cardCount", cardCount))
 	}
 	return html, nil
 }
@@ -294,7 +420,7 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 			}
 			var h string
 			err := Retry(ctx, 2, func() error {
-				pageHTML, ferr := s.fetchListHTML(ctx, nextURL, site, strategy)
+				pageHTML, ferr := s.fetchListHTML(ctx, nextURL, site, strategy, opts.Cookies)
 				if ferr != nil {
 					return ferr
 				}
@@ -355,7 +481,9 @@ func effectiveMaxItems(configMax, detectedTotal int) int {
 	}
 }
 
-var inventoryTotalTextRe = regexp.MustCompile(`(?i)(?:showing\s+\d+\s*[-–]\s*\d+\s+of|of|total)\s*([0-9][0-9,]{0,8})\s*(?:vehicles?|cars?|results?|inventory)?`)
+// Require a numeric range before "of" (e.g. "1 - 11 of 24") to avoid matching
+// page-number patterns like "Page 1 of 1".
+var inventoryTotalTextRe = regexp.MustCompile(`(?i)(?:\d+\s*[-–—]\s*\d+\s+of\s+|total\s+)([0-9][0-9,]{0,8})\s*(?:vehicles?|cars?|results?|inventory|listings?)?`)
 
 func detectInventoryTotal(html string, site config.SiteConfig) int {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))

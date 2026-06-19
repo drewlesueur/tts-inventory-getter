@@ -36,6 +36,13 @@ func NewChromeBrowser(headless bool) (*ChromeBrowser, context.CancelFunc) {
 	if headless {
 		opts = append(opts, chromedp.Headless, chromedp.DisableGPU)
 	}
+	opts = append(opts,
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.Flag("disable-infobars", true),
+		chromedp.Flag("excludeSwitches", "enable-automation"),
+		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+		chromedp.WindowSize(1366, 768),
+	)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	cancel := func() { cancelAlloc() }
 	return &ChromeBrowser{allocCtx: allocCtx}, cancel
@@ -77,6 +84,9 @@ func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.S
 	// Phase 1: navigate and read final URL immediately to fail fast on bad redirects.
 	var finalURL string
 	if err := chromedp.Run(timeoutCtx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			return chromedp.Evaluate(`Object.defineProperty(navigator, 'webdriver', {get: () => undefined})`, nil).Do(ctx)
+		}),
 		chromedp.Navigate(urlStr),
 		chromedp.Sleep(800*time.Millisecond),
 		chromedp.Location(&finalURL),

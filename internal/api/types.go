@@ -31,7 +31,17 @@ type DiscoverFlowRequest struct {
 }
 
 type TapToSignUpsertRequest struct {
-	AccountID    string               `json:"accountId"`
-	DealershipID string               `json:"dealershipId"`
+	AccountID    string                `json:"accountId"`
+	DealershipID string                `json:"dealershipId"`
 	Items        []model.InventoryItem `json:"items"`
+}
+
+// ScrapeRunRequest is the request body for POST /v1/scrape/run.
+// dealershipId is optional; defaults to the URL hostname.
+type ScrapeRunRequest struct {
+	URL          string            `json:"url"`
+	DealershipID string            `json:"dealershipId,omitempty"`
+	TimeoutSec   int               `json:"timeoutSec,omitempty"`
+	Options      *ScrapeOptions    `json:"options,omitempty"`
+	Cookies      map[string]string `json:"cookies,omitempty"`
 }

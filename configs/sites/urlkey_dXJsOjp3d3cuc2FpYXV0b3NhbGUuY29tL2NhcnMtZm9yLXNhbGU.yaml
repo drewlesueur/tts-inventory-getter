@@ -1,0 +1,34 @@
+name: url::www.saiautosale.com/cars-for-sale
+baseUrl: https://www.saiautosale.com/cars-for-sale
+listPage:
+    waitSelectors:
+        - .vehicle-snapshot
+    cardSelector: li.vehicle-snapshot
+    titleSelector: .vehicle-snapshot__title a
+    urlSelector: .vehicle-snapshot__title a
+    priceSelector: .vehicle-snapshot__main-info-item:first-child .vehicle-snapshot__main-info
+    mileageSelector: .vehicle-snapshot__main-info-item:last-child .vehicle-snapshot__main-info
+    imageSelector: .vehicle-snapshot__image img
+    stockSelector: ""
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src]
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)
+    vin:
+        - \\b([A-HJ-NPR-Z0-9]{17})\\b
+discovery:
+    discoveredAt: "2026-06-19T16:32:15Z"

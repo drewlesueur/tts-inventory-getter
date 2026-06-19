@@ -27,22 +27,23 @@ import (
 )
 
 type Server struct {
-	cfg       config.Config
-	logger    *zap.Logger
-	scraper   scrape.Service
-	sites     config.Loader
-	store     store.ResultStore
-	metrics   *metrics.Metrics
-	discover  *discovery.Client
-	invClient *inventoryapi.Client
+	cfg         config.Config
+	logger      *zap.Logger
+	scraper     scrape.Service
+	sites       config.Loader
+	store       store.ResultStore
+	metrics     *metrics.Metrics
+	discover    *discovery.Client
+	invClient   *inventoryapi.Client
+	cookieStore *scrape.CookieStore
 
 	dailyUpsertMu      sync.Mutex
 	dailyUpsertRunning bool
 	dailyUpsertJob     func()
 }
 
-func NewServer(cfg config.Config, logger *zap.Logger, scraper scrape.Service, sites config.Loader, st store.ResultStore, mt *metrics.Metrics, discover *discovery.Client, invClient *inventoryapi.Client) *Server {
-	return &Server{cfg: cfg, logger: logger, scraper: scraper, sites: sites, store: st, metrics: mt, discover: discover, invClient: invClient}
+func NewServer(cfg config.Config, logger *zap.Logger, scraper scrape.Service, sites config.Loader, st store.ResultStore, mt *metrics.Metrics, discover *discovery.Client, invClient *inventoryapi.Client, cookieStore *scrape.CookieStore) *Server {
+	return &Server{cfg: cfg, logger: logger, scraper: scraper, sites: sites, store: st, metrics: mt, discover: discover, invClient: invClient, cookieStore: cookieStore}
 }
 
 func (s *Server) SetDailyUpsertJob(job func()) {
@@ -60,6 +61,8 @@ func (s *Server) Router() http.Handler {
 
 	v1 := http.NewServeMux()
 	v1.HandleFunc("POST /v1/scrape/once", s.handleScrapeOnce)
+	v1.HandleFunc("POST /v1/scrape/run", s.handleScrapeRun)
+	v1.HandleFunc("POST /v1/cookies/datadome", s.handleSetDataDomeCookie)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
 	v1.HandleFunc("DELETE /v1/site-config-cache", s.handleClearSiteConfigCache)
@@ -199,6 +202,93 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 
 	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout, req.Options)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
+}
+
+func (s *Server) handleSetDataDomeCookie(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Cookie string `json:"cookie"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	if strings.TrimSpace(req.Cookie) == "" {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "cookie is required"))
+		return
+	}
+	if s.cookieStore == nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("COOKIE_STORE_UNAVAILABLE", "cookie store not initialised"))
+		return
+	}
+	if err := s.cookieStore.Set("datadome", strings.TrimSpace(req.Cookie)); err != nil {
+		s.logger.Error("datadome cookie persist failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("PERSIST_FAILED", err.Error()))
+		return
+	}
+	s.logger.Info("datadome cookie updated via API")
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "datadome cookie updated"})
+}
+
+func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
+	var req ScrapeRunRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	if !validURL(req.URL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url is required"))
+		return
+	}
+	dealershipID := req.DealershipID
+	if dealershipID == "" {
+		if u, err := url.Parse(req.URL); err == nil {
+			dealershipID = u.Hostname()
+		} else {
+			dealershipID = req.URL
+		}
+	}
+
+	timeout := s.cfg.DefaultRunTimeout()
+	if req.TimeoutSec > 0 {
+		timeout = time.Duration(req.TimeoutSec) * time.Second
+	}
+	if req.Options != nil && req.Options.RunTimeoutSec > 0 {
+		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
+	}
+
+	onceReq := ScrapeOnceRequest{
+		DealershipID: dealershipID,
+		SourceURL:    req.URL,
+		Options:      req.Options,
+	}
+	site, err := s.resolveSiteConfig(r.Context(), onceReq)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
+		return
+	}
+	site = s.applyCrawlLimits(site, req.Options)
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	scrapeOpts := scrape.Options{
+		DealershipID: dealershipID,
+		SourceURL:    req.URL,
+		Cookies:      req.Cookies,
+	}
+	if req.Options != nil && strings.TrimSpace(req.Options.BrowserStrategy) != "" {
+		scrapeOpts.BrowserStrategy = req.Options.BrowserStrategy
+	}
+
+	result := s.scraper.ScrapeOnceWithOptions(ctx, req.URL, site, scrapeOpts)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "ok",
+		"url":       req.URL,
+		"itemCount": len(result.Items),
+		"items":     result.Items,
+		"errors":    result.Errors,
+	})
 }
 
 func (s *Server) applyCrawlLimits(site config.SiteConfig, opts *ScrapeOptions) config.SiteConfig {
