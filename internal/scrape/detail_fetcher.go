@@ -83,6 +83,24 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 			item.PrimaryImage = imgs[0]
 		}
 	}
+	// carsforsale.com platform structure: label/value pairs in sibling divs
+	// (.vdp-info-block__info-item-title / .vdp-info-block__info-item-description).
+	// Parse these first — they are clean and authoritative, avoiding the heuristics
+	// below that can mistake a label like "Stock #" for its value.
+	vdp := parseVDPInfoBlocks(doc)
+	if item.VIN == "" {
+		if v := findVINInText(vdp["vin"]); v != "" {
+			item.VIN = v
+		}
+	}
+	if item.StockID == "" {
+		if s := vdp["stock #"]; s != "" {
+			item.StockID = s
+		} else if s := vdp["stock"]; s != "" {
+			item.StockID = s
+		}
+	}
+
 	if site.DetailPage.VINSelector != "" && item.VIN == "" {
 		item.VIN = doc.Find(site.DetailPage.VINSelector).First().Text()
 	}
@@ -207,8 +225,30 @@ func findStockIDInText(text string) string {
 	return ""
 }
 
+// parseVDPInfoBlocks reads the carsforsale.com vehicle-detail spec pairs,
+// returning a lowercased label -> value map (e.g. "engine" -> "ECOTEC 1.6L...").
+func parseVDPInfoBlocks(doc *goquery.Document) map[string]string {
+	out := map[string]string{}
+	doc.Find(".vdp-info-block__info-item-title").Each(func(_ int, s *goquery.Selection) {
+		label := strings.ToLower(clean(s.Text()))
+		val := clean(s.Next().Text())
+		if val == "" {
+			val = clean(s.NextAll().Filter(".vdp-info-block__info-item-description").First().Text())
+		}
+		if label != "" && val != "" {
+			out[label] = val
+		}
+	})
+	return out
+}
+
 func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, html string) {
 	kv := map[string]string{}
+
+	// Seed with the clean carsforsale.com spec pairs first.
+	for k, v := range parseVDPInfoBlocks(doc) {
+		kv[k] = v
+	}
 
 	doc.Find("tr").Each(func(_ int, tr *goquery.Selection) {
 		cells := tr.Find("th,td")
@@ -267,7 +307,13 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 		item.Year = pickValueByLabel(kv, "year")
 	}
 	if item.Color == "" {
-		item.Color = pickValueByLabel(kv, "color", "exterior color", "ext color")
+		// Prefer exterior color; fall back to generic "color" but never interior.
+		item.Color = pickValueByLabel(kv, "exterior color", "ext color")
+		if item.Color == "" {
+			if v := kv["color"]; v != "" {
+				item.Color = v
+			}
+		}
 	}
 	if item.Mileage == "" {
 		item.Mileage = pickValueByLabel(kv, "mileage", "miles", "odometer")

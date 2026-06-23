@@ -101,15 +101,16 @@ func (c *CookieStore) Len() int {
 }
 
 type Service struct {
-	Browser        Browser
-	AltBrowser     Browser
-	Fetcher        Fetcher
-	DetailFetcher  DetailFetcher
-	Extractors     []Extractor
-	Concurrency    int
-	AIEnricher     *AIEnricher
-	Logger         *zap.Logger
-	DefaultCookies *CookieStore
+	Browser            Browser
+	AltBrowser         Browser
+	Fetcher            Fetcher
+	DetailFetcher      DetailFetcher
+	BatchDetailFetcher *BatchDetailFetcher
+	Extractors         []Extractor
+	Concurrency        int
+	AIEnricher         *AIEnricher
+	Logger             *zap.Logger
+	DefaultCookies     *CookieStore
 }
 
 type unsafeFetcher interface {
@@ -195,37 +196,49 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 		errs = filteredErrs
 	}
 
-	sem := make(chan struct{}, s.Concurrency)
-	wg := sync.WaitGroup{}
-	mu := sync.Mutex{}
-	for idx := range allItems {
-		if allItems[idx].URL == "" {
-			continue
-		}
-		if len(site.DetailPage.ImageSelectors) == 0 && site.DetailPage.VINSelector == "" && site.DetailPage.StockSelector == "" {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			dctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-			defer cancel()
-			item, err := s.DetailFetcher.FetchDetails(dctx, allItems[i], site)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: err.Error(), ItemURL: allItems[i].URL})
-				reportItemsProgress(opts, "details_progress", allItems)
-				return
+	detailsWanted := len(site.DetailPage.ImageSelectors) > 0 || site.DetailPage.VINSelector != "" || site.DetailPage.StockSelector != ""
+	if detailsWanted && s.BatchDetailFetcher != nil {
+		// Render all detail pages in one Camoufox session (fast, DataDome-safe).
+		populated, derr := s.BatchDetailFetcher.PrefetchAndPopulate(ctx, allItems, site)
+		if derr != nil {
+			errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: derr.Error()})
+			if s.Logger != nil {
+				s.Logger.Warn("batch detail fetch failed", zap.Error(derr))
 			}
-			allItems[i] = item
-			reportItemsProgress(opts, "details_progress", allItems)
-		}(idx)
+		} else {
+			allItems = populated
+		}
+		reportItemsProgress(opts, "details_completed", allItems)
+	} else if detailsWanted {
+		sem := make(chan struct{}, s.Concurrency)
+		wg := sync.WaitGroup{}
+		mu := sync.Mutex{}
+		for idx := range allItems {
+			if allItems[idx].URL == "" {
+				continue
+			}
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				dctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+				defer cancel()
+				item, err := s.DetailFetcher.FetchDetails(dctx, allItems[i], site)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: err.Error(), ItemURL: allItems[i].URL})
+					reportItemsProgress(opts, "details_progress", allItems)
+					return
+				}
+				allItems[i] = item
+				reportItemsProgress(opts, "details_progress", allItems)
+			}(idx)
+		}
+		wg.Wait()
+		reportItemsProgress(opts, "details_completed", allItems)
 	}
-	wg.Wait()
-	reportItemsProgress(opts, "details_completed", allItems)
 	for i := range allItems {
 		allItems[i] = NormalizeItem(sourceURL, allItems[i])
 		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
@@ -281,20 +294,23 @@ func cookieHeader(cookies map[string]string) string {
 }
 
 func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string, cookies map[string]string) (string, error) {
-	// Cookie path: use Chrome-impersonating TLS fetch directly — no browser fallback.
-	if len(cookies) > 0 && s.Fetcher != nil {
+	// Primary path: the cookie-aware fetcher (CurlFetcher) self-heals — it tries
+	// curl_cffi with the cookie first, then falls back to Camoufox (which bypasses
+	// DataDome without any cookie). Always route through it when available, even
+	// with no cookie, since Camoufox needs none.
+	if s.Fetcher != nil {
 		if cf, ok := s.Fetcher.(interface {
 			FetchWithCookie(context.Context, string, string) (string, error)
 		}); ok {
 			html, err := cf.FetchWithCookie(ctx, pageURL, cookieHeader(cookies))
 			if err != nil {
-				return "", fmt.Errorf("cookie fetch failed: %w", err)
+				return "", fmt.Errorf("fetch failed: %w", err)
 			}
 			if isDataDomeChallenge(html) {
-				return "", fmt.Errorf("datadome challenge blocked: cookie may be expired — update DATADOME_COOKIE in .env")
+				return "", fmt.Errorf("datadome challenge still present after all bypass strategies")
 			}
 			if s.Logger != nil {
-				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "http_fetch_cookie"), zap.Int("cardCount", countCards(html, site.ListPage.CardSelector)))
+				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_camoufox"), zap.Int("cardCount", countCards(html, site.ListPage.CardSelector)))
 			}
 			return html, nil
 		}

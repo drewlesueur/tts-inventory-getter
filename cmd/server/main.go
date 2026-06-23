@@ -64,23 +64,42 @@ func main() {
 
 	httpFetcher := scrape.NewHTTPFetcherWithTimeout(time.Duration(cfg.HTTPFetchTimeoutSec) * time.Second)
 	httpFetcher.CookieStore = cookieStore
+	if cfg.ScraperProxy != "" {
+		httpFetcher.ProxyURL = cfg.ScraperProxy
+		logger.Info("scraper proxy configured")
+	}
 	rodBrowser, cancelRod := scrape.NewRodBrowser(cfg.Headless)
 	defer cancelRod()
 	playwrightBrowser := scrape.NewPlaywrightBrowser(cfg.PlaywrightCommand)
 
-	activeFetcher := scrape.Fetcher(httpFetcher)
+	var activeFetcher scrape.Fetcher = httpFetcher
+	var batchDetailFetcher *scrape.BatchDetailFetcher
+	if cfg.FetchScriptPath != "" {
+		if _, statErr := os.Stat(cfg.FetchScriptPath); statErr == nil {
+			activeFetcher = scrape.NewCurlFetcher(cfg.FetchScriptPath, cfg.PythonBin, cookieStore)
+			logger.Info("curl_cffi fetcher enabled", zap.String("script", cfg.FetchScriptPath), zap.String("python", cfg.PythonBin))
+		}
+	}
+	if cfg.DetailScriptPath != "" {
+		if _, statErr := os.Stat(cfg.DetailScriptPath); statErr == nil {
+			imgSizes := scrape.NewImageSizeCache()
+			batchDetailFetcher = scrape.NewBatchDetailFetcher(cfg.DetailScriptPath, cfg.PythonBin, imgSizes, cookieStore)
+			logger.Info("batch detail fetcher enabled", zap.String("script", cfg.DetailScriptPath))
+		}
+	}
 
 	imageSizes := scrape.NewImageSizeCache()
 	scraper := scrape.Service{
-		Browser:        playwrightBrowser,
-		AltBrowser:     rodBrowser,
-		Fetcher:        activeFetcher,
-		DetailFetcher:  scrape.HTMLDetailFetcher{Fetcher: activeFetcher, Browser: rodBrowser, ImageSizes: imageSizes},
-		Extractors:     []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
-		Concurrency:    cfg.Concurrency,
-		AIEnricher:     &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
-		Logger:         logger,
-		DefaultCookies: cookieStore,
+		Browser:            playwrightBrowser,
+		AltBrowser:         rodBrowser,
+		Fetcher:            activeFetcher,
+		DetailFetcher:      scrape.HTMLDetailFetcher{Fetcher: activeFetcher, Browser: rodBrowser, ImageSizes: imageSizes},
+		BatchDetailFetcher: batchDetailFetcher,
+		Extractors:         []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}, scrape.NextDataExtractor{}, scrape.RegexExtractor{}},
+		Concurrency:        cfg.Concurrency,
+		AIEnricher:         &scrape.AIEnricher{APIKey: cfg.OpenAIAPIKey, Model: cfg.OpenAIModel},
+		Logger:             logger,
+		DefaultCookies:     cookieStore,
 	}
 
 	m := metrics.New()

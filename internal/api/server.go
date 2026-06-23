@@ -61,6 +61,7 @@ func (s *Server) Router() http.Handler {
 
 	v1 := http.NewServeMux()
 	v1.HandleFunc("POST /v1/scrape/once", s.handleScrapeOnce)
+	v1.HandleFunc("POST /v1/scrape/once-and-result", s.handleScrapeOnceAndResult)
 	v1.HandleFunc("POST /v1/scrape/run", s.handleScrapeRun)
 	v1.HandleFunc("POST /v1/cookies/datadome", s.handleSetDataDomeCookie)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
@@ -202,6 +203,74 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 
 	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout, req.Options)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
+}
+
+func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Request) {
+	var req ScrapeOnceRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	s.logger.Info("scrape-once-and-result request",
+		zap.String("dealershipId", req.DealershipID),
+		zap.String("sourceUrl", req.SourceURL),
+		zap.Any("options", req.Options),
+	)
+	if req.DealershipID == "" || !validURL(req.SourceURL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
+		return
+	}
+	scopedKey := scopedIdempotencyKey(req.IdempotencyKey, req.DealershipID, req.SourceURL)
+	if existing, err := s.store.FindByIdempotency(r.Context(), scopedKey); err == nil {
+		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
+			writeJSON(w, http.StatusOK, resultResponse(existing))
+			return
+		}
+	}
+
+	site, err := s.resolveSiteConfig(r.Context(), req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
+		return
+	}
+	site = s.applyCrawlLimits(site, req.Options)
+
+	resultID := uuid.NewString()
+	started := time.Now().UTC()
+	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedKey, ProgressStage: "accepted"}
+	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+
+	timeout := s.cfg.DefaultRunTimeout()
+	if req.Options != nil && req.Options.RunTimeoutSec > 0 {
+		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
+	}
+
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedKey, site, timeout, req.Options)
+
+	// Poll until the scrape finishes (or the request context is cancelled).
+	pollCtx, pollCancel := context.WithTimeout(r.Context(), timeout+30*time.Second)
+	defer pollCancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-pollCtx.Done():
+			writeJSON(w, http.StatusGatewayTimeout, model.ErrorResponse("TIMEOUT", "scrape did not finish within the allowed time"))
+			return
+		case <-ticker.C:
+			result, err := s.store.GetResult(pollCtx, resultID)
+			if err != nil {
+				continue
+			}
+			if result.Status != model.RunStatusRunning {
+				writeJSON(w, http.StatusOK, resultResponse(result))
+				return
+			}
+		}
+	}
 }
 
 func (s *Server) handleSetDataDomeCookie(w http.ResponseWriter, r *http.Request) {

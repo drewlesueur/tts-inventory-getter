@@ -33,10 +33,10 @@ func TestNewPlaywrightBrowserUsesLocalPlaywrightDependency(t *testing.T) {
 
 func TestShouldFallbackToNpxPlaywright(t *testing.T) {
 	errText := `Error: Cannot find module 'playwright'`
-	if !shouldFallbackToNpxPlaywright(errText) {
+	if !isModuleNotFound(errText, "playwright") {
 		t.Fatalf("expected fallback trigger for missing playwright module")
 	}
-	if shouldFallbackToNpxPlaywright("some unrelated node error") {
+	if isModuleNotFound("some unrelated node error", "playwright") {
 		t.Fatalf("unexpected fallback trigger for unrelated error")
 	}
 }

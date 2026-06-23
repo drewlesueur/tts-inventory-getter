@@ -556,13 +556,18 @@ func pickImageList(m map[string]any) []string {
 }
 
 func firstNonEmptyImageAttr(s *goquery.Selection) string {
-	keys := []string{"src", "data-src", "data-lazy-src", "data-original", "data-image", "data-srcset", "srcset"}
+	// Lazy-load attributes come first: carousels often set src to a generic
+	// placeholder and put the real image in data-lazy/data-src.
+	keys := []string{"data-lazy", "data-lazy-src", "data-src", "data-original", "data-image", "data-srcset", "srcset", "src"}
 	for _, k := range keys {
 		raw := strings.TrimSpace(s.AttrOr(k, ""))
 		if raw == "" {
 			continue
 		}
 		if strings.HasPrefix(strings.ToLower(raw), "data:image/") {
+			continue
+		}
+		if isPlaceholderImageURL(raw) {
 			continue
 		}
 		if k == "srcset" || k == "data-srcset" {
@@ -574,6 +579,16 @@ func firstNonEmptyImageAttr(s *goquery.Selection) string {
 		return raw
 	}
 	return ""
+}
+
+// isPlaceholderImageURL filters out generic stock/placeholder graphics that
+// carousels show before lazy-loading the real photo.
+func isPlaceholderImageURL(u string) bool {
+	l := strings.ToLower(u)
+	return strings.Contains(l, "sports_car_front_view") ||
+		strings.Contains(l, "/images/nophoto") ||
+		strings.Contains(l, "no-photo") ||
+		strings.Contains(l, "placeholder")
 }
 
 func firstFromSrcset(raw string) string {

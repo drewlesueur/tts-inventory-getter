@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "DataDome Cookie Sync",
+  "version": "1.0",
+  "description": "Silently syncs DataDome cookies to the scraper server when you visit monitored sites.",
+  "permissions": [
+    "cookies",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DataDome Sync"
+  }
+}

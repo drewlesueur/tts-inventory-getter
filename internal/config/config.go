@@ -41,6 +41,10 @@ type Config struct {
 	DefaultMaxLoadMoreClicks   int
 	DefaultMaxItems            int
 	DataDomeCookie             string
+	ScraperProxy               string
+	PythonBin                  string
+	FetchScriptPath            string
+	DetailScriptPath           string
 }
 
 func Load() (Config, error) {
@@ -84,6 +88,10 @@ func Load() (Config, error) {
 		DefaultMaxLoadMoreClicks:   viper.GetInt("DEFAULT_MAX_LOAD_MORE_CLICKS"),
 		DefaultMaxItems:            viper.GetInt("DEFAULT_MAX_ITEMS"),
 		DataDomeCookie:             viper.GetString("DATADOME_COOKIE"),
+		ScraperProxy:               viper.GetString("SCRAPER_PROXY"),
+		PythonBin:                  viper.GetString("PYTHON_BIN"),
+		FetchScriptPath:            viper.GetString("FETCH_SCRIPT_PATH"),
+		DetailScriptPath:           viper.GetString("DETAIL_SCRIPT_PATH"),
 	}
 	if cfg.ServiceKey == "" {
 		return Config{}, fmt.Errorf("SERVICE_KEY is required")
@@ -126,6 +134,9 @@ func setDefaults() {
 	viper.SetDefault("ENABLE_CODEX_DISCOVERY", false)
 	viper.SetDefault("OPENAI_MODEL", "gpt-4.1-mini")
 	viper.SetDefault("PLAYWRIGHT_COMMAND", `node -e 'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'`)
+	viper.SetDefault("PYTHON_BIN", "python3")
+	viper.SetDefault("FETCH_SCRIPT_PATH", "scripts/fetch_page.py")
+	viper.SetDefault("DETAIL_SCRIPT_PATH", "scripts/fetch_details.py")
 	viper.SetDefault("DEFAULT_MAX_PAGES", 20)
 	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
 	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)

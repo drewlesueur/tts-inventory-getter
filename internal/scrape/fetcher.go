@@ -19,6 +19,7 @@ type HTTPFetcher struct {
 	client       *http.Client
 	unsafeClient *http.Client
 	CookieStore  *CookieStore
+	ProxyURL     string // e.g. "http://user:pass@host:port" or "socks5://..."
 }
 
 func NewHTTPFetcher() *HTTPFetcher {
@@ -72,10 +73,14 @@ func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string
 		return "", err
 	}
 
-	tlsClient, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
+	tlsOpts := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Chrome_120),
-	)
+	}
+	if f.ProxyURL != "" {
+		tlsOpts = append(tlsOpts, tls_client.WithProxyUrl(f.ProxyURL))
+	}
+	tlsClient, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), tlsOpts...)
 	if err != nil {
 		return "", fmt.Errorf("tls client init: %w", err)
 	}
