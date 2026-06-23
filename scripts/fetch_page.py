@@ -54,6 +54,22 @@ def is_blocked(html: str) -> bool:
     return False
 
 
+def _proxy_from_env():
+    """Parse SCRAPER_PROXY (http://user:pass@host:port) into camoufox's proxy dict."""
+    import os
+    from urllib.parse import urlparse
+    raw = os.environ.get("SCRAPER_PROXY", "").strip()
+    if not raw:
+        return None
+    u = urlparse(raw)
+    proxy = {"server": f"{u.scheme}://{u.hostname}:{u.port}"}
+    if u.username:
+        proxy["username"] = u.username
+    if u.password:
+        proxy["password"] = u.password
+    return proxy
+
+
 def new_camoufox():
     """Build an AsyncCamoufox with a pre-generated browserforge fingerprint.
 
@@ -61,6 +77,9 @@ def new_camoufox():
     can produce a screen constraint that browserforge can't satisfy
     ("No headers based on this input can be generated"). Generating the
     fingerprint ourselves (no screen constraint) bypasses that.
+
+    Set SCRAPER_PROXY to route through a residential proxy — required when the
+    server's datacenter IP is blocked by DataDome (hard 500 / interactive challenge).
     """
     from camoufox.async_api import AsyncCamoufox
     from browserforge.fingerprints import FingerprintGenerator, Screen
@@ -72,7 +91,12 @@ def new_camoufox():
         device="desktop",
         screen=Screen(min_width=1280, min_height=720),
     ).generate()
-    return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
+    kwargs = {"headless": True, "fingerprint": fp, "i_know_what_im_doing": True}
+    proxy = _proxy_from_env()
+    if proxy:
+        kwargs["proxy"] = proxy
+        print(f"[camoufox] using proxy {proxy['server']}", file=sys.stderr)
+    return AsyncCamoufox(**kwargs)
 
 
 # ── Strategy 1: curl_cffi (fast, uses existing cookie) ───────────────────────

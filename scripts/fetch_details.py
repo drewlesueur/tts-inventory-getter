@@ -24,9 +24,25 @@ def is_blocked(html: str) -> bool:
     return False
 
 
+def _proxy_from_env():
+    import os
+    from urllib.parse import urlparse
+    raw = os.environ.get("SCRAPER_PROXY", "").strip()
+    if not raw:
+        return None
+    u = urlparse(raw)
+    proxy = {"server": f"{u.scheme}://{u.hostname}:{u.port}"}
+    if u.username:
+        proxy["username"] = u.username
+    if u.password:
+        proxy["password"] = u.password
+    return proxy
+
+
 def new_camoufox():
     """AsyncCamoufox with a pre-generated fingerprint (bypasses headless-server
-    screen-detection that breaks browserforge header generation)."""
+    screen-detection that breaks browserforge header generation). Honors
+    SCRAPER_PROXY for residential-proxy routing."""
     from camoufox.async_api import AsyncCamoufox
     from browserforge.fingerprints import FingerprintGenerator, Screen
     fp = FingerprintGenerator(
@@ -35,7 +51,12 @@ def new_camoufox():
         device="desktop",
         screen=Screen(min_width=1280, min_height=720),
     ).generate()
-    return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
+    kwargs = {"headless": True, "fingerprint": fp, "i_know_what_im_doing": True}
+    proxy = _proxy_from_env()
+    if proxy:
+        kwargs["proxy"] = proxy
+        print(f"[details] using proxy {proxy['server']}", file=sys.stderr)
+    return AsyncCamoufox(**kwargs)
 
 
 async def fetch_all(urls):
