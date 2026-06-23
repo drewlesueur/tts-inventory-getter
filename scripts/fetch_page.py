@@ -139,6 +139,23 @@ async def try_camoufox(url: str):
     try:
         async with new_camoufox() as browser:
             page = await browser.new_page()
+
+            # Warm-up: hit the site root first so DataDome establishes a trusted
+            # session, then navigate to the deep page. A cold direct hit to a deep
+            # URL can get a hard 500 from the origin even after the JS challenge.
+            from urllib.parse import urlparse
+            root = "{0.scheme}://{0.netloc}/".format(urlparse(url))
+            if root.rstrip("/") != url.rstrip("/"):
+                try:
+                    await page.goto(root, wait_until="domcontentloaded", timeout=30000)
+                    for _ in range(5):
+                        await asyncio.sleep(2)
+                        if not is_blocked(await page.content()):
+                            break
+                    print("[camoufox] warm-up done, navigating to target", file=sys.stderr)
+                except Exception as e:
+                    print(f"[camoufox] warm-up skipped: {e}", file=sys.stderr)
+
             await page.goto(url, wait_until="domcontentloaded")
 
             # Wait for DataDome to clear (usually instant with Camoufox)

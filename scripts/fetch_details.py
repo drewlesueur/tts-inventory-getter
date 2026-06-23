@@ -71,6 +71,22 @@ async def fetch_all(urls):
 
     async with new_camoufox() as browser:
         page = await browser.new_page()
+
+        # Warm-up: establish a trusted DataDome session via the site root before
+        # hitting deep detail pages (a cold deep hit can get a hard 500).
+        from urllib.parse import urlparse
+        try:
+            first = urlparse(urls[0])
+            root = f"{first.scheme}://{first.netloc}/"
+            await page.goto(root, wait_until="domcontentloaded", timeout=30000)
+            for _ in range(5):
+                await asyncio.sleep(2)
+                if not is_blocked(await page.content()):
+                    break
+            print("[details] warm-up done", file=sys.stderr)
+        except Exception as e:
+            print(f"[details] warm-up skipped: {e}", file=sys.stderr)
+
         for i, url in enumerate(urls):
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
