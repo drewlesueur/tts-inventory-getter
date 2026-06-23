@@ -28,8 +28,13 @@ def new_camoufox():
     """AsyncCamoufox with a pre-generated fingerprint (bypasses headless-server
     screen-detection that breaks browserforge header generation)."""
     from camoufox.async_api import AsyncCamoufox
-    from browserforge.fingerprints import FingerprintGenerator
-    fp = FingerprintGenerator(browser="firefox", os=("windows", "macos", "linux")).generate()
+    from browserforge.fingerprints import FingerprintGenerator, Screen
+    fp = FingerprintGenerator(
+        browser="firefox",
+        os=("windows", "macos", "linux"),
+        device="desktop",
+        screen=Screen(min_width=1280, min_height=720),
+    ).generate()
     return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
 
 

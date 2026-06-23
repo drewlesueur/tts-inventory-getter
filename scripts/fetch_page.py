@@ -63,8 +63,15 @@ def new_camoufox():
     fingerprint ourselves (no screen constraint) bypasses that.
     """
     from camoufox.async_api import AsyncCamoufox
-    from browserforge.fingerprints import FingerprintGenerator
-    fp = FingerprintGenerator(browser="firefox", os=("windows", "macos", "linux")).generate()
+    from browserforge.fingerprints import FingerprintGenerator, Screen
+    # device="desktop" + a desktop-sized screen guarantees the site serves its
+    # desktop layout (a mobile fingerprint would yield different selectors → 0 cards).
+    fp = FingerprintGenerator(
+        browser="firefox",
+        os=("windows", "macos", "linux"),
+        device="desktop",
+        screen=Screen(min_width=1280, min_height=720),
+    ).generate()
     return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
 
 
