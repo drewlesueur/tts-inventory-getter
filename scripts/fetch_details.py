@@ -34,7 +34,7 @@ async def fetch_all(urls):
     results = {}
     dd_cookie = ""
 
-    async with AsyncCamoufox(headless=True, os="windows") as browser:
+    async with AsyncCamoufox(headless=True) as browser:
         page = await browser.new_page()
         for i, url in enumerate(urls):
             try:

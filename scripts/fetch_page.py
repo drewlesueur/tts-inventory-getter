@@ -92,7 +92,7 @@ async def try_camoufox(url: str):
 
     print("[camoufox] launching Firefox...", file=sys.stderr)
     try:
-        async with AsyncCamoufox(headless=True, os="windows") as browser:
+        async with AsyncCamoufox(headless=True) as browser:
             page = await browser.new_page()
             await page.goto(url, wait_until="domcontentloaded")
 
@@ -112,10 +112,10 @@ async def try_camoufox(url: str):
                 try:
                     prev_count = -1
                     for _ in range(10):
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        await page.evaluate("() => { if (document.body) window.scrollTo(0, document.body.scrollHeight); }")
                         await asyncio.sleep(1.2)
                         count = await page.evaluate(
-                            "document.querySelectorAll('li.vehicle-snapshot, .vehicle-snapshot, [class*=\"vehicle-card\"], article').length"
+                            "() => document.querySelectorAll('li.vehicle-snapshot, .vehicle-snapshot, [class*=\"vehicle-card\"], article').length"
                         )
                         if count == prev_count:
                             break
