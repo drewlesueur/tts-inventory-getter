@@ -1,2 +1,7 @@
-curl_cffi>=0.7
-camoufox>=0.4
+# Pinned to versions verified to work together. The "No headers based on this
+# input can be generated" error on a server means a mismatched browserforge /
+# apify_fingerprint_datapoints got installed — keep these exact.
+curl_cffi==0.15.0
+camoufox==0.4.11
+browserforge==1.2.4
+apify_fingerprint_datapoints==0.13.0
