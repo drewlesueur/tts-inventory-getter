@@ -24,9 +24,18 @@ def is_blocked(html: str) -> bool:
     return False
 
 
+def new_camoufox():
+    """AsyncCamoufox with a pre-generated fingerprint (bypasses headless-server
+    screen-detection that breaks browserforge header generation)."""
+    from camoufox.async_api import AsyncCamoufox
+    from browserforge.fingerprints import FingerprintGenerator
+    fp = FingerprintGenerator(browser="firefox", os=("windows", "macos", "linux")).generate()
+    return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
+
+
 async def fetch_all(urls):
     try:
-        from camoufox.async_api import AsyncCamoufox
+        import camoufox.async_api  # noqa: F401
     except ImportError:
         print(json.dumps({"error": "camoufox not installed"}))
         sys.exit(1)
@@ -34,7 +43,7 @@ async def fetch_all(urls):
     results = {}
     dd_cookie = ""
 
-    async with AsyncCamoufox(headless=True) as browser:
+    async with new_camoufox() as browser:
         page = await browser.new_page()
         for i, url in enumerate(urls):
             try:

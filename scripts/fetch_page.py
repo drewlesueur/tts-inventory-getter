@@ -54,6 +54,20 @@ def is_blocked(html: str) -> bool:
     return False
 
 
+def new_camoufox():
+    """Build an AsyncCamoufox with a pre-generated browserforge fingerprint.
+
+    On headless servers camoufox's automatic screen detection (get_monitors)
+    can produce a screen constraint that browserforge can't satisfy
+    ("No headers based on this input can be generated"). Generating the
+    fingerprint ourselves (no screen constraint) bypasses that.
+    """
+    from camoufox.async_api import AsyncCamoufox
+    from browserforge.fingerprints import FingerprintGenerator
+    fp = FingerprintGenerator(browser="firefox", os=("windows", "macos", "linux")).generate()
+    return AsyncCamoufox(headless=True, fingerprint=fp, i_know_what_im_doing=True)
+
+
 # ── Strategy 1: curl_cffi (fast, uses existing cookie) ───────────────────────
 def try_curl_cffi(url: str, cookie: str):
     try:
@@ -92,7 +106,7 @@ async def try_camoufox(url: str):
 
     print("[camoufox] launching Firefox...", file=sys.stderr)
     try:
-        async with AsyncCamoufox(headless=True) as browser:
+        async with new_camoufox() as browser:
             page = await browser.new_page()
             await page.goto(url, wait_until="domcontentloaded")
 
