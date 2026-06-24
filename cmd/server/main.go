@@ -197,6 +197,13 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 	}
 	logger.Info("scrape job starting", zap.String("job", jobName), zap.String("schedule", scheduleType), zap.Int("pages", len(eligible)))
 
+	// URLs that must never be live-scraped on the cloud (e.g. DataDome-blocked
+	// from this IP) — served from the cache that a local scraper syncs in.
+	cacheOnly := make(map[string]struct{}, len(cfg.CacheOnlyURLs))
+	for _, u := range cfg.CacheOnlyURLs {
+		cacheOnly[store.NormalizeURLKey(u)] = struct{}{}
+	}
+
 	out := make([]scrapedPage, 0, len(eligible))
 	for _, p := range eligible {
 		if p.FTPSyncEnabled() {
@@ -215,23 +222,40 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			logger.Warn("skipping invalid page entry", zap.String("job", jobName), zap.Any("entry", p))
 			continue
 		}
-		resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		site, err := resolveSite(resolveCtx, logger, siteLoader, discoverClient, scraper, p.DealershipID, p.URL)
-		resolveCancel()
-		if err != nil {
-			logger.Warn("site config resolve failed, skipping", zap.String("job", jobName), zap.String("dealershipId", p.DealershipID), zap.Error(err))
-			continue
-		}
 
-		runCtx, runCancel := context.WithTimeout(context.Background(), cfg.DefaultRunTimeout())
+		var res scrape.RunResult
 		started := time.Now().UTC()
-		res := scraper.ScrapeOnceWithOptions(runCtx, p.URL, site, scrape.Options{
-			DealershipID:       p.DealershipID,
-			SourceURL:          p.URL,
-			BrowserStrategy:    "rod_first",
-			EnableAIEnrichment: scraper.AIEnricher != nil,
-		})
-		runCancel()
+
+		if _, isCacheOnly := cacheOnly[store.NormalizeURLKey(p.URL)]; isCacheOnly {
+			// Serve from the synced cache instead of live-scraping.
+			cached, cerr := resultStore.GetCachedInventory(context.Background(), p.URL)
+			if cerr != nil {
+				logger.Warn("cache-only url has no cached inventory, skipping",
+					zap.String("job", jobName), zap.String("url", p.URL), zap.Error(cerr))
+				continue
+			}
+			res = scrape.RunResult{Items: cached.Items}
+			logger.Info("served from cache",
+				zap.String("job", jobName), zap.String("url", p.URL),
+				zap.Int("items", len(cached.Items)), zap.Time("cachedAt", cached.UpdatedAt))
+		} else {
+			resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			site, err := resolveSite(resolveCtx, logger, siteLoader, discoverClient, scraper, p.DealershipID, p.URL)
+			resolveCancel()
+			if err != nil {
+				logger.Warn("site config resolve failed, skipping", zap.String("job", jobName), zap.String("dealershipId", p.DealershipID), zap.Error(err))
+				continue
+			}
+
+			runCtx, runCancel := context.WithTimeout(context.Background(), cfg.DefaultRunTimeout())
+			res = scraper.ScrapeOnceWithOptions(runCtx, p.URL, site, scrape.Options{
+				DealershipID:       p.DealershipID,
+				SourceURL:          p.URL,
+				BrowserStrategy:    "rod_first",
+				EnableAIEnrichment: scraper.AIEnricher != nil,
+			})
+			runCancel()
+		}
 
 		record := model.ScrapeResult{
 			ResultID:     uuid.NewString(),

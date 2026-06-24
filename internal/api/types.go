@@ -45,3 +45,15 @@ type ScrapeRunRequest struct {
 	Options      *ScrapeOptions    `json:"options,omitempty"`
 	Cookies      map[string]string `json:"cookies,omitempty"`
 }
+
+// ScrapeSyncRequest is the body for POST /v1/scrape/sync — a local scraper pushes
+// already-scraped inventory for a URL. The cloud caches it and upserts to the
+// dealer/account that owns the URL. dealershipId/accountId are optional; if omitted
+// they are resolved from the inventory API by matching the URL.
+type ScrapeSyncRequest struct {
+	URL          string                `json:"url"`
+	DealershipID string                `json:"dealershipId,omitempty"`
+	AccountID    string                `json:"accountId,omitempty"`
+	Items        []model.InventoryItem `json:"items"`
+	SkipUpsert   bool                  `json:"skipUpsert,omitempty"`
+}

@@ -2,10 +2,26 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+// splitAndTrim splits a comma-separated env value into trimmed non-empty parts.
+func splitAndTrim(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 type Config struct {
 	Port                       string
@@ -45,6 +61,7 @@ type Config struct {
 	PythonBin                  string
 	FetchScriptPath            string
 	DetailScriptPath           string
+	CacheOnlyURLs              []string
 }
 
 func Load() (Config, error) {
@@ -92,6 +109,7 @@ func Load() (Config, error) {
 		PythonBin:                  viper.GetString("PYTHON_BIN"),
 		FetchScriptPath:            viper.GetString("FETCH_SCRIPT_PATH"),
 		DetailScriptPath:           viper.GetString("DETAIL_SCRIPT_PATH"),
+		CacheOnlyURLs:              splitAndTrim(viper.GetString("CACHE_ONLY_URLS")),
 	}
 	if cfg.ServiceKey == "" {
 		return Config{}, fmt.Errorf("SERVICE_KEY is required")

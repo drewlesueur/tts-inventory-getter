@@ -63,6 +63,8 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("POST /v1/scrape/once", s.handleScrapeOnce)
 	v1.HandleFunc("POST /v1/scrape/once-and-result", s.handleScrapeOnceAndResult)
 	v1.HandleFunc("POST /v1/scrape/run", s.handleScrapeRun)
+	v1.HandleFunc("POST /v1/scrape/sync", s.handleScrapeSync)
+	v1.HandleFunc("GET /v1/scrape/cache", s.handleGetCachedInventory)
 	v1.HandleFunc("POST /v1/cookies/datadome", s.handleSetDataDomeCookie)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
@@ -298,6 +300,144 @@ func (s *Server) handleSetDataDomeCookie(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "datadome cookie updated"})
 }
 
+// handleScrapeSync accepts inventory scraped externally (e.g. on a local
+// residential IP), caches it keyed by URL, and upserts it to the owning
+// dealer/account. dealershipId/accountId are resolved from the inventory API
+// by matching the URL when not supplied.
+func (s *Server) handleScrapeSync(w http.ResponseWriter, r *http.Request) {
+	var req ScrapeSyncRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	if !validURL(req.URL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url is required"))
+		return
+	}
+
+	// Keep only items with a stock id (matches the upsert requirement elsewhere).
+	items := make([]model.InventoryItem, 0, len(req.Items))
+	for _, it := range req.Items {
+		if it.StockID != "" || it.Stock != "" {
+			items = append(items, it)
+		}
+	}
+
+	dealershipID, accountID := req.DealershipID, req.AccountID
+	if (dealershipID == "" || accountID == "") && s.invClient != nil {
+		if d, a, ok := s.resolveDealerByURL(r.Context(), req.URL); ok {
+			if dealershipID == "" {
+				dealershipID = d
+			}
+			if accountID == "" {
+				accountID = a
+			}
+		}
+	}
+
+	// Cache it (keyed by URL) so scheduled runs can serve from cache.
+	cached := store.CachedInventory{
+		SourceURL:    req.URL,
+		DealershipID: dealershipID,
+		AccountID:    accountID,
+		Items:        items,
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := s.store.UpsertCachedInventory(r.Context(), cached); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_STORE_FAILED", err.Error()))
+		return
+	}
+	s.logger.Info("inventory synced to cache",
+		zap.String("url", req.URL),
+		zap.String("dealershipId", dealershipID),
+		zap.String("accountId", accountID),
+		zap.Int("items", len(items)),
+	)
+
+	upserted := false
+	var upsertErr string
+	if !req.SkipUpsert && s.invClient != nil && accountID != "" && dealershipID != "" && len(items) > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		if err := s.invClient.UpsertInventory(ctx, accountID, dealershipID, items); err != nil {
+			upsertErr = err.Error()
+			s.logger.Error("sync upsert failed", zap.String("accountId", accountID), zap.Error(err))
+		} else {
+			upserted = true
+		}
+	}
+
+	resp := map[string]any{
+		"status":       "ok",
+		"url":          req.URL,
+		"dealershipId": dealershipID,
+		"accountId":    accountID,
+		"cachedItems":  len(items),
+		"upserted":     upserted,
+	}
+	if upsertErr != "" {
+		resp["upsertError"] = upsertErr
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleGetCachedInventory returns the cached inventory for a URL (?url=...).
+func (s *Server) handleGetCachedInventory(w http.ResponseWriter, r *http.Request) {
+	sourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if !validURL(sourceURL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url query param is required"))
+		return
+	}
+	cached, err := s.store.GetCachedInventory(r.Context(), sourceURL)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "no cached inventory for url"))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "ok",
+		"url":          cached.SourceURL,
+		"dealershipId": cached.DealershipID,
+		"accountId":    cached.AccountID,
+		"itemCount":    len(cached.Items),
+		"updatedAt":    cached.UpdatedAt,
+		"items":        cached.Items,
+	})
+}
+
+// resolveDealerByURL looks up the dealership/account that owns a URL from the
+// inventory API page list.
+func (s *Server) resolveDealerByURL(ctx context.Context, sourceURL string) (dealershipID, accountID string, ok bool) {
+	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	pages, err := s.invClient.ListPages(lctx)
+	if err != nil {
+		s.logger.Warn("resolveDealerByURL list failed", zap.Error(err))
+		return "", "", false
+	}
+	want := store.NormalizeURLKey(sourceURL)
+	for _, p := range pages {
+		if store.NormalizeURLKey(p.URL) == want {
+			return p.DealershipID, p.AccountID, true
+		}
+	}
+	return "", "", false
+}
+
+// isCacheOnly reports whether a URL must be served from cache (never live-scraped).
+func (s *Server) isCacheOnly(rawURL string) bool {
+	want := store.NormalizeURLKey(rawURL)
+	for _, u := range s.cfg.CacheOnlyURLs {
+		if store.NormalizeURLKey(u) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	var req ScrapeRunRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -308,6 +448,30 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url is required"))
 		return
 	}
+
+	// Cache-only URLs (e.g. DataDome-blocked from this IP) are served from the
+	// synced cache instead of live-scraping.
+	if s.isCacheOnly(req.URL) {
+		cached, err := s.store.GetCachedInventory(r.Context(), req.URL)
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is cache-only but no synced inventory exists yet"))
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "ok",
+			"url":       req.URL,
+			"source":    "cache",
+			"itemCount": len(cached.Items),
+			"items":     cached.Items,
+			"updatedAt": cached.UpdatedAt,
+		})
+		return
+	}
+
 	dealershipID := req.DealershipID
 	if dealershipID == "" {
 		if u, err := url.Parse(req.URL); err == nil {

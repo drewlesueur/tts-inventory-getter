@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS scrape_results (
   errors_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scrape_results_idempotency ON scrape_results(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+CREATE TABLE IF NOT EXISTS cached_inventory (
+  source_url TEXT PRIMARY KEY,
+  dealership_id TEXT,
+  account_id TEXT,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.Exec(q); err != nil {
 		return err
@@ -165,6 +172,55 @@ func (s *SQLiteResultStore) ClearIdempotency(ctx context.Context) error {
 func (s *SQLiteResultStore) ClearResults(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM scrape_results`)
 	return err
+}
+
+func (s *SQLiteResultStore) UpsertCachedInventory(ctx context.Context, c CachedInventory) error {
+	items, err := json.Marshal(c.Items)
+	if err != nil {
+		return err
+	}
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	const q = `
+INSERT INTO cached_inventory (source_url, dealership_id, account_id, items_json, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(source_url) DO UPDATE SET
+  dealership_id=excluded.dealership_id,
+  account_id=excluded.account_id,
+  items_json=excluded.items_json,
+  updated_at=excluded.updated_at`
+	_, err = s.db.ExecContext(ctx, q,
+		NormalizeURLKey(c.SourceURL),
+		c.DealershipID,
+		c.AccountID,
+		string(items),
+		updatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+func (s *SQLiteResultStore) GetCachedInventory(ctx context.Context, sourceURL string) (CachedInventory, error) {
+	const q = `SELECT source_url, dealership_id, account_id, items_json, updated_at FROM cached_inventory WHERE source_url = ?`
+	var out CachedInventory
+	var itemsJSON, updatedAt string
+	err := s.db.QueryRowContext(ctx, q, NormalizeURLKey(sourceURL)).Scan(
+		&out.SourceURL, &out.DealershipID, &out.AccountID, &itemsJSON, &updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return CachedInventory{}, ErrNotFound
+	}
+	if err != nil {
+		return CachedInventory{}, err
+	}
+	if err := json.Unmarshal([]byte(itemsJSON), &out.Items); err != nil {
+		return CachedInventory{}, err
+	}
+	if updatedAt != "" {
+		out.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	}
+	return out, nil
 }
 
 func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (model.ScrapeResult, error) {

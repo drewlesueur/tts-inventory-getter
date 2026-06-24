@@ -41,7 +41,7 @@ func TestSiteConfigCacheDeleteBySourceURL(t *testing.T) {
 		t.Fatalf("seed cache save failed: %v", err)
 	}
 
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/site-config-cache?sourceUrl=https://www.idealcarsaz.com/used-cars-in-mesa-az/", nil)
@@ -65,7 +65,7 @@ func TestSiteConfigCacheClearAll(t *testing.T) {
 	_ = loader.SaveByName("url::a.test/inventory", config.SiteConfig{Name: "url::a.test/inventory", BaseURL: "https://a.test/inventory", ListPage: config.ListPageConfig{CardSelector: ".vehicle-card"}})
 	_ = loader.SaveByName("url::b.test/inventory", config.SiteConfig{Name: "url::b.test/inventory", BaseURL: "https://b.test/inventory", ListPage: config.ListPageConfig{CardSelector: ".vehicle-card"}})
 
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/site-config-cache?all=true", nil)
@@ -114,7 +114,7 @@ func TestScrapeOnceEndpoint(t *testing.T) {
 	site.DetailPage.ImageSelectors = []string{".gallery img"}
 
 	svc := scrape.Service{Fetcher: fixtureFetcher{list: string(list), d1: string(d1), d2: string(d2)}, DetailFetcher: scrape.HTMLDetailFetcher{Fetcher: fixtureFetcher{list: string(list), d1: string(d1), d2: string(d2)}}, Extractors: []scrape.Extractor{scrape.LoopHTMLExtractor{}, scrape.DOMExtractor{}}, Concurrency: 2}
-	server := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	payload := map[string]any{"dealershipId": "x", "sourceUrl": "https://dealer.test/inventory", "siteConfig": site}
@@ -138,7 +138,7 @@ func TestScrapeOnceEndpoint_IdempotencyDoesNotReuseAcrossDifferentSourceURL(t *t
 	mem := store.NewMemoryResultStore()
 	site := config.SiteConfig{}
 	svc := scrape.Service{}
-	server := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	err := mem.UpsertResult(context.Background(), model.ScrapeResult{
@@ -195,7 +195,7 @@ func TestGetResultEndpointIncludesScrapedInventoryCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed upsert failed: %v", err)
 	}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/results/result-1", nil)
@@ -252,7 +252,7 @@ func TestGetResultEndpointCountsUniqueVINs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed upsert failed: %v", err)
 	}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/results/result-vins", nil)
@@ -292,7 +292,7 @@ func TestGetResultEndpointHidesUnstableDiscoveryCountWhileRunning(t *testing.T) 
 	if err != nil {
 		t.Fatalf("seed upsert failed: %v", err)
 	}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-result", nil)
@@ -342,7 +342,7 @@ func TestGetResultEndpointReturnsStableDedupedCountWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed upsert failed: %v", err)
 	}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-deduped-result", nil)
@@ -387,7 +387,7 @@ func TestGetResultEndpointHidesDetailsProgressCountWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed upsert failed: %v", err)
 	}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/results/running-details-result", nil)
@@ -417,7 +417,7 @@ func TestGetResultEndpointHidesDetailsProgressCountWhileRunning(t *testing.T) {
 
 func TestDailyUpsertCronEndpointTriggersConfiguredJob(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	called := make(chan struct{}, 1)
 	server.SetDailyUpsertJob(func() {
 		called <- struct{}{}
@@ -444,7 +444,7 @@ func TestDailyUpsertCronEndpointTriggersConfiguredJob(t *testing.T) {
 
 func TestManualLoadDailyUpsertEndpointTriggersConfiguredJob(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	called := make(chan struct{}, 1)
 	server.SetDailyUpsertJob(func() {
 		called <- struct{}{}
@@ -468,7 +468,7 @@ func TestManualLoadDailyUpsertEndpointTriggersConfiguredJob(t *testing.T) {
 
 func TestScrapeDailyUpsertEndpointTriggersConfiguredJob(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	called := make(chan struct{}, 1)
 	server.SetDailyUpsertJob(func() {
 		called <- struct{}{}
@@ -492,7 +492,7 @@ func TestScrapeDailyUpsertEndpointTriggersConfiguredJob(t *testing.T) {
 
 func TestDailyUpsertCronEndpointRequiresConfiguredJob(t *testing.T) {
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 60}
-	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 	r := server.Router()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/cron/daily-upsert", nil)
@@ -514,7 +514,7 @@ func TestApplyCrawlLimits_UsesDefaultsAndOverrides(t *testing.T) {
 		DefaultMaxScrollAttempts: 8,
 		DefaultMaxLoadMoreClicks: 20,
 		DefaultMaxItems:          200,
-	}, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil)
+	}, zap.NewNop(), scrape.Service{}, config.Loader{}, store.NewMemoryResultStore(), testMetrics(), nil, nil, nil)
 
 	site := config.SiteConfig{}
 	site.ListPage.CardSelector = ".vehicle-card"

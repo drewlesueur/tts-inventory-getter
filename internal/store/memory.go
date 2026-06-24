@@ -11,10 +11,28 @@ type MemoryResultStore struct {
 	mu     sync.RWMutex
 	byID   map[string]model.ScrapeResult
 	byIdem map[string]string
+	cache  map[string]CachedInventory
 }
 
 func NewMemoryResultStore() *MemoryResultStore {
-	return &MemoryResultStore{byID: map[string]model.ScrapeResult{}, byIdem: map[string]string{}}
+	return &MemoryResultStore{byID: map[string]model.ScrapeResult{}, byIdem: map[string]string{}, cache: map[string]CachedInventory{}}
+}
+
+func (m *MemoryResultStore) UpsertCachedInventory(_ context.Context, c CachedInventory) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cache[NormalizeURLKey(c.SourceURL)] = c
+	return nil
+}
+
+func (m *MemoryResultStore) GetCachedInventory(_ context.Context, sourceURL string) (CachedInventory, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.cache[NormalizeURLKey(sourceURL)]
+	if !ok {
+		return CachedInventory{}, ErrNotFound
+	}
+	return c, nil
 }
 
 func (m *MemoryResultStore) UpsertResult(_ context.Context, result model.ScrapeResult) error {

@@ -59,7 +59,7 @@ func TestRunScrapeAsync_RetriesThenSuccess(t *testing.T) {
 	svc := scrape.Service{Fetcher: f, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
 	cfg := config.Config{ScrapeMaxAttempts: 3, ScrapeRetryBackoffSec: 1, DefaultRunTimeoutSec: 60}
 	st := store.NewMemoryResultStore()
-	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
+	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil, nil, nil)
 
 	s.runScrapeAsync("r1", "d1", "https://dealer.test/inventory", "idem-1", testSiteConfig(), 10*time.Second, nil)
 
@@ -82,7 +82,7 @@ func TestRunScrapeAsync_ExhaustsRetries(t *testing.T) {
 	svc := scrape.Service{Fetcher: alwaysErrFetcher{err: errors.New("context deadline exceeded")}, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
 	cfg := config.Config{ScrapeMaxAttempts: 3, ScrapeRetryBackoffSec: 1, DefaultRunTimeoutSec: 60}
 	st := store.NewMemoryResultStore()
-	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
+	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil, nil, nil)
 
 	s.runScrapeAsync("r2", "d1", "https://dealer.test/inventory", "idem-2", testSiteConfig(), 5*time.Second, nil)
 
@@ -105,7 +105,7 @@ func TestRunScrapeAsync_NonRetryableFailure(t *testing.T) {
 	svc := scrape.Service{Fetcher: alwaysErrFetcher{err: errors.New("blocked redirect to local host: http://127.0.0.1")}, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
 	cfg := config.Config{ScrapeMaxAttempts: 3, ScrapeRetryBackoffSec: 1, DefaultRunTimeoutSec: 60}
 	st := store.NewMemoryResultStore()
-	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil)
+	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil, nil, nil)
 
 	s.runScrapeAsync("r3", "d1", "https://dealer.test/inventory", "idem-3", testSiteConfig(), 5*time.Second, nil)
 
