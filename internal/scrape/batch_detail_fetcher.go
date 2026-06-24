@@ -21,6 +21,7 @@ type BatchDetailFetcher struct {
 	PythonBin   string
 	ImageSizes  *ImageSizeCache
 	CookieStore *CookieStore
+	MaxPages    int // cap on detail pages fetched per run (0 = unlimited)
 }
 
 func NewBatchDetailFetcher(scriptPath, pythonBin string, sizes *ImageSizeCache, store *CookieStore) *BatchDetailFetcher {
@@ -49,6 +50,9 @@ func (b *BatchDetailFetcher) PrefetchAndPopulate(ctx context.Context, items []mo
 	}
 	if len(urls) == 0 {
 		return items, nil
+	}
+	if b.MaxPages > 0 && len(urls) > b.MaxPages {
+		urls = urls[:b.MaxPages]
 	}
 
 	htmlByURL, err := b.fetchAll(ctx, urls)

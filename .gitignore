@@ -31,3 +31,6 @@ data/
 # Temp
 *.tmp
 *.swp
+
+# Scrape JSON logs written to repo root by scripts/sync_to_cloud.py
+/scrape-*.json

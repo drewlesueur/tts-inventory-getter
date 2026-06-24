@@ -76,7 +76,9 @@ func main() {
 	var batchDetailFetcher *scrape.BatchDetailFetcher
 	if cfg.FetchScriptPath != "" {
 		if _, statErr := os.Stat(cfg.FetchScriptPath); statErr == nil {
-			activeFetcher = scrape.NewCurlFetcher(cfg.FetchScriptPath, cfg.PythonBin, cookieStore)
+			cf := scrape.NewCurlFetcher(cfg.FetchScriptPath, cfg.PythonBin, cookieStore)
+			cf.Fallback = httpFetcher // plain HTTP fallback for non-DataDome sites / python misconfig
+			activeFetcher = cf
 			logger.Info("curl_cffi fetcher enabled", zap.String("script", cfg.FetchScriptPath), zap.String("python", cfg.PythonBin))
 		}
 	}
@@ -84,7 +86,8 @@ func main() {
 		if _, statErr := os.Stat(cfg.DetailScriptPath); statErr == nil {
 			imgSizes := scrape.NewImageSizeCache()
 			batchDetailFetcher = scrape.NewBatchDetailFetcher(cfg.DetailScriptPath, cfg.PythonBin, imgSizes, cookieStore)
-			logger.Info("batch detail fetcher enabled", zap.String("script", cfg.DetailScriptPath))
+			batchDetailFetcher.MaxPages = cfg.DetailMaxPages
+			logger.Info("batch detail fetcher enabled", zap.String("script", cfg.DetailScriptPath), zap.Int("maxPages", cfg.DetailMaxPages))
 		}
 	}
 

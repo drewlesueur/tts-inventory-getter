@@ -61,6 +61,7 @@ type Config struct {
 	PythonBin                  string
 	FetchScriptPath            string
 	DetailScriptPath           string
+	DetailMaxPages             int
 	CacheOnlyURLs              []string
 }
 
@@ -109,6 +110,7 @@ func Load() (Config, error) {
 		PythonBin:                  viper.GetString("PYTHON_BIN"),
 		FetchScriptPath:            viper.GetString("FETCH_SCRIPT_PATH"),
 		DetailScriptPath:           viper.GetString("DETAIL_SCRIPT_PATH"),
+		DetailMaxPages:             viper.GetInt("DETAIL_MAX_PAGES"),
 		CacheOnlyURLs:              splitAndTrim(viper.GetString("CACHE_ONLY_URLS")),
 	}
 	if cfg.ServiceKey == "" {
@@ -155,6 +157,7 @@ func setDefaults() {
 	viper.SetDefault("PYTHON_BIN", "python3")
 	viper.SetDefault("FETCH_SCRIPT_PATH", "scripts/fetch_page.py")
 	viper.SetDefault("DETAIL_SCRIPT_PATH", "scripts/fetch_details.py")
+	viper.SetDefault("DETAIL_MAX_PAGES", 150)
 	viper.SetDefault("DEFAULT_MAX_PAGES", 20)
 	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
 	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)

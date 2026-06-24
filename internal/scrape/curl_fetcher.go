@@ -16,6 +16,10 @@ type CurlFetcher struct {
 	ScriptPath  string // path to fetch_page.py
 	PythonBin   string // e.g. "python3.11" or "python3"
 	CookieStore *CookieStore
+	// Fallback is a plain HTTP fetcher used when the Python subprocess can't run
+	// (e.g. wrong PYTHON_BIN) or errors. Non-DataDome sites scrape fine via plain
+	// HTTP, so a Python misconfig should not break them.
+	Fallback Fetcher
 }
 
 func NewCurlFetcher(scriptPath, pythonBin string, store *CookieStore) *CurlFetcher {
@@ -60,19 +64,20 @@ func (c *CurlFetcher) fetchWithCookie(ctx context.Context, rawURL, cookie string
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("curl_cffi fetch failed: %w — %s", err, strings.TrimSpace(stderr.String()))
+	runErr := cmd.Run()
+	if runErr != nil {
+		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi exec failed: %w — %s", runErr, strings.TrimSpace(stderr.String())))
 	}
 
 	var result fetchPageResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		return "", fmt.Errorf("curl_cffi output parse failed: %w", err)
+		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi output parse failed: %w", err))
 	}
 	if result.Error != "" {
-		return "", fmt.Errorf("curl_cffi: %s", result.Error)
+		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi: %s", result.Error))
 	}
 	if result.Status >= 400 {
-		return "", fmt.Errorf("curl_cffi fetch failed status=%d", result.Status)
+		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi fetch failed status=%d", result.Status))
 	}
 
 	// Save refreshed cookie back to the store
@@ -81,4 +86,18 @@ func (c *CurlFetcher) fetchWithCookie(ctx context.Context, rawURL, cookie string
 	}
 
 	return result.HTML, nil
+}
+
+// fallback tries the plain HTTP fetcher when the Python path fails. If the
+// fallback also fails or returns a DataDome challenge, the original error is
+// returned so the caller still sees the real reason.
+func (c *CurlFetcher) fallback(ctx context.Context, rawURL string, origErr error) (string, error) {
+	if c.Fallback == nil {
+		return "", origErr
+	}
+	html, err := c.Fallback.Fetch(ctx, rawURL)
+	if err != nil || isDataDomeChallenge(html) {
+		return "", origErr
+	}
+	return html, nil
 }

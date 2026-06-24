@@ -18,12 +18,15 @@ Env:
 import os
 import sys
 import json
+import datetime
+import urllib.parse
 import urllib.request
 
 LOCAL_URL = os.environ.get("LOCAL_URL", "http://localhost:8080").rstrip("/")
 CLOUD_URL = os.environ.get("CLOUD_URL", "").rstrip("/")
 SERVICE_KEY = os.environ.get("SERVICE_KEY", "")
 TIMEOUT_SEC = int(os.environ.get("TIMEOUT_SEC", "300"))
+LOG_DIR = os.environ.get("LOG_DIR", ".")
 
 if len(sys.argv) < 2:
     print("usage: sync_to_cloud.py <scrape_url> [dealershipId] [accountId]")
@@ -53,6 +56,28 @@ print(f"[local] scraping {scrape_url} ...")
 local = post(LOCAL_URL, "/v1/scrape/run", {"url": scrape_url, "timeoutSec": TIMEOUT_SEC})
 items = local.get("items") or []
 print(f"[local] got {len(items)} items")
+
+# Write a timestamped JSON log of the scraped items.
+ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+host = urllib.parse.urlparse(scrape_url).netloc.replace("www.", "")
+os.makedirs(LOG_DIR, exist_ok=True)
+log_path = os.path.join(LOG_DIR, f"scrape-{host}_{ts}.json")
+with open(log_path, "w") as f:
+    json.dump(
+        {
+            "url": scrape_url,
+            "dealershipId": dealership_id,
+            "accountId": account_id,
+            "scrapedAt": datetime.datetime.now().isoformat(),
+            "itemCount": len(items),
+            "errors": local.get("errors") or [],
+            "items": items,
+        },
+        f,
+        indent=2,
+    )
+print(f"[log]  wrote {len(items)} items to {log_path}")
+
 if not items:
     print("[local] no items — aborting (errors:", local.get("errors"), ")")
     sys.exit(1)

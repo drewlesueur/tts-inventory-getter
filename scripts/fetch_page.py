@@ -170,23 +170,42 @@ async def try_camoufox(url: str):
                 print(f"[camoufox] still blocked at {(attempt+1)*3}s...", file=sys.stderr)
 
             if passed:
-                # Scroll to trigger lazy-loaded cards, then wait for network idle.
+                # Let the initial card grid finish loading before counting.
                 try:
-                    prev_count = -1
-                    for _ in range(10):
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+
+                CARD_SEL = ("li.vehicle-snapshot, .vehicle-snapshot, "
+                            "[class*=\"vehicle-card\"], article")
+                count_js = f"() => document.querySelectorAll('{CARD_SEL}').length"
+
+                # Scroll to trigger lazy-loaded cards. Only stop once the count
+                # has stayed the same for several consecutive checks (and is > 0),
+                # so we don't bail out mid-load when it momentarily plateaus.
+                try:
+                    last = -1
+                    stable = 0
+                    final = 0
+                    for i in range(25):
                         await page.evaluate("() => { if (document.body) window.scrollTo(0, document.body.scrollHeight); }")
-                        await asyncio.sleep(1.2)
-                        count = await page.evaluate(
-                            "() => document.querySelectorAll('li.vehicle-snapshot, .vehicle-snapshot, [class*=\"vehicle-card\"], article').length"
-                        )
-                        if count == prev_count:
-                            break
-                        prev_count = count
+                        await asyncio.sleep(1.0)
+                        count = await page.evaluate(count_js)
+                        final = count
+                        if count > 0 and count == last:
+                            stable += 1
+                            if stable >= 4:  # ~4s unchanged → fully loaded
+                                break
+                        else:
+                            stable = 0
+                        last = count
+                    # scroll back to top so any top-anchored lazy imgs settle
+                    await page.evaluate("() => window.scrollTo(0, 0)")
                     try:
                         await page.wait_for_load_state("networkidle", timeout=5000)
                     except Exception:
                         pass
-                    print(f"[camoufox] cards after scroll: {prev_count}", file=sys.stderr)
+                    print(f"[camoufox] cards after scroll: {final}", file=sys.stderr)
                 except Exception as e:
                     print(f"[camoufox] scroll error: {e}", file=sys.stderr)
 
