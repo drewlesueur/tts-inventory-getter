@@ -68,6 +68,11 @@ CREATE TABLE IF NOT EXISTS cached_inventory (
   items_json TEXT NOT NULL DEFAULT '[]',
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS protected_urls (
+  source_url TEXT PRIMARY KEY,
+  reason TEXT,
+  flagged_at TEXT NOT NULL
+);
 `
 	if _, err := s.db.Exec(q); err != nil {
 		return err
@@ -221,6 +226,59 @@ func (s *SQLiteResultStore) GetCachedInventory(ctx context.Context, sourceURL st
 		out.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	}
 	return out, nil
+}
+
+func (s *SQLiteResultStore) FlagProtectedURL(ctx context.Context, p ProtectedURL) error {
+	flaggedAt := p.FlaggedAt
+	if flaggedAt.IsZero() {
+		flaggedAt = time.Now().UTC()
+	}
+	const q = `
+INSERT INTO protected_urls (source_url, reason, flagged_at)
+VALUES (?, ?, ?)
+ON CONFLICT(source_url) DO UPDATE SET
+  reason=excluded.reason,
+  flagged_at=excluded.flagged_at`
+	_, err := s.db.ExecContext(ctx, q, NormalizeURLKey(p.SourceURL), p.Reason, flaggedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *SQLiteResultStore) UnflagProtectedURL(ctx context.Context, sourceURL string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM protected_urls WHERE source_url = ?`, NormalizeURLKey(sourceURL))
+	return err
+}
+
+func (s *SQLiteResultStore) IsProtectedURL(ctx context.Context, sourceURL string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM protected_urls WHERE source_url = ?`, NormalizeURLKey(sourceURL)).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *SQLiteResultStore) ListProtectedURLs(ctx context.Context) ([]ProtectedURL, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_url, reason, flagged_at FROM protected_urls ORDER BY flagged_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]ProtectedURL, 0)
+	for rows.Next() {
+		var p ProtectedURL
+		var flaggedAt string
+		if err := rows.Scan(&p.SourceURL, &p.Reason, &flaggedAt); err != nil {
+			return nil, err
+		}
+		if flaggedAt != "" {
+			p.FlaggedAt, _ = time.Parse(time.RFC3339Nano, flaggedAt)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (model.ScrapeResult, error) {

@@ -20,6 +20,20 @@ type ResultStore interface {
 	// Cached inventory pushed from an external (e.g. local) scraper for a source URL.
 	UpsertCachedInventory(ctx context.Context, c CachedInventory) error
 	GetCachedInventory(ctx context.Context, sourceURL string) (CachedInventory, error)
+
+	// Protected URLs: sources auto-flagged as bot-protected (e.g. DataDome) on
+	// this host, so scrapes are served from the synced cache instead of live.
+	FlagProtectedURL(ctx context.Context, p ProtectedURL) error
+	UnflagProtectedURL(ctx context.Context, sourceURL string) error
+	IsProtectedURL(ctx context.Context, sourceURL string) (bool, error)
+	ListProtectedURLs(ctx context.Context) ([]ProtectedURL, error)
+}
+
+// ProtectedURL marks a source URL that cannot be live-scraped from this host.
+type ProtectedURL struct {
+	SourceURL string    `json:"sourceUrl"`
+	Reason    string    `json:"reason"`
+	FlaggedAt time.Time `json:"flaggedAt"`
 }
 
 // CachedInventory is inventory synced from an external scraper, keyed by source URL.

@@ -199,14 +199,17 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	detailsWanted := len(site.DetailPage.ImageSelectors) > 0 || site.DetailPage.VINSelector != "" || site.DetailPage.StockSelector != ""
 	if detailsWanted && s.BatchDetailFetcher != nil {
 		// Render all detail pages in one Camoufox session (fast, DataDome-safe).
+		// On error (e.g. run deadline killed the batch) populated still carries
+		// details for every page fetched before the failure — keep those.
 		populated, derr := s.BatchDetailFetcher.PrefetchAndPopulate(ctx, allItems, site)
+		if populated != nil {
+			allItems = populated
+		}
 		if derr != nil {
 			errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: derr.Error()})
 			if s.Logger != nil {
 				s.Logger.Warn("batch detail fetch failed", zap.Error(derr))
 			}
-		} else {
-			allItems = populated
 		}
 		reportItemsProgress(opts, "details_completed", allItems)
 	} else if detailsWanted {
@@ -519,6 +522,10 @@ func detectInventoryTotal(html string, site config.SiteConfig) int {
 	if n := parsePositiveInt(doc.Find("#ds-inventory-model").First().AttrOr("data-results-total", "0")); n > 0 {
 		return n
 	}
+	// DealerCenter/carsforsale-platform sites expose the total in a hidden input
+	if n := parsePositiveInt(doc.Find("input.data-inventory-total-records").First().AttrOr("value", "0")); n > 0 {
+		return n
+	}
 	return 0
 }
 
@@ -573,6 +580,11 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 			if !looksLikePaginationOrInventoryURL(abs) {
 				return
 			}
+			// a bare link back to the current listing path (no query) is a JS-driven
+			// "Next" button, not a real next page — following it just re-fetches page 1
+			if isBareSelfLink(pageURL, abs) {
+				return
+			}
 			seen[abs] = struct{}{}
 			out = append(out, abs)
 		})
@@ -584,7 +596,43 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		seen[next] = struct{}{}
 		out = append(out, next)
 	}
+	for _, next := range extractPageNumberParamURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	return out
+}
+
+// no trailing \b: goquery .Text() concatenates nodes without whitespace, so the
+// total may run into following text ("Page 1 of 3Next")
+var pageXofYRe = regexp.MustCompile(`(?i)\bpage\s+(\d+)\s+of\s+(\d+)`)
+
+// extractPageNumberParamURLs handles DealerCenter/carsforsale-platform dealer
+// sites whose pagination is a JS form POST with no crawlable page hrefs. The
+// pagination widget shows "Page X of Y" and the server also accepts GET
+// ?PageNumber=N, so we synthesize the next page URL from that text.
+func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string {
+	pagText := doc.Find("[class*='pagination']").Text()
+	m := pageXofYRe.FindStringSubmatch(pagText)
+	if len(m) < 3 {
+		return nil
+	}
+	cur := parsePositiveInt(m[1])
+	total := parsePositiveInt(m[2])
+	if cur <= 0 || total <= 1 || cur >= total {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	q := u.Query()
+	q.Set("PageNumber", strconv.Itoa(cur+1))
+	u.RawQuery = q.Encode()
+	return []string{u.String()}
 }
 
 func extractDealerSyncPageURLs(pageURL string, doc *goquery.Document) []string {
@@ -688,8 +736,23 @@ func looksLikePaginationOrInventoryURL(u string) bool {
 	}
 	return strings.Contains(l, "/page/") ||
 		strings.Contains(l, "page=") ||
+		strings.Contains(l, "pagenum=") ||
+		strings.Contains(l, "pagesize=") ||
 		strings.Contains(l, "/inventory") ||
-		strings.Contains(l, "/used-cars")
+		strings.Contains(l, "/used-cars") ||
+		strings.Contains(l, "/cars-for-sale")
+}
+
+func isBareSelfLink(pageURL, candidate string) bool {
+	cu, err := url.Parse(candidate)
+	if err != nil || cu.RawQuery != "" {
+		return false
+	}
+	pu, err := url.Parse(pageURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.Trim(cu.EscapedPath(), "/"), strings.Trim(pu.EscapedPath(), "/"))
 }
 
 func sameHost(baseURL, candidate string) bool {
@@ -699,6 +762,25 @@ func sameHost(baseURL, candidate string) bool {
 		return true
 	}
 	return strings.EqualFold(bu.Hostname(), cu.Hostname())
+}
+
+// IsBotProtectionFailure reports whether scrape errors indicate the host is
+// bot-blocked (DataDome challenge, 403/500 block, all bypass strategies failed)
+// rather than a scraping/parsing problem.
+func IsBotProtectionFailure(errs []model.StructuredError) bool {
+	for _, e := range errs {
+		if e.Code != "SCRAPE_RENDER_FAILED" && e.Code != "PAGINATION_FETCH_FAILED" {
+			continue
+		}
+		msg := strings.ToLower(e.Message)
+		if strings.Contains(msg, "datadome") ||
+			strings.Contains(msg, "captcha-delivery") ||
+			strings.Contains(msg, "blocked") ||
+			strings.Contains(msg, "all strategies failed") {
+			return true
+		}
+	}
+	return false
 }
 
 func isTimeoutLikeErr(err error) bool {

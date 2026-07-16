@@ -1,0 +1,147 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
+	"github.com/drewlesueur/tts-inventory-getter/internal/model"
+	"github.com/drewlesueur/tts-inventory-getter/internal/scrape"
+	"github.com/drewlesueur/tts-inventory-getter/internal/sites"
+	"github.com/drewlesueur/tts-inventory-getter/internal/store"
+)
+
+// blockedFetcher simulates a bot-protection wall (DataDome) on every fetch.
+type blockedFetcher struct{}
+
+func (blockedFetcher) Fetch(_ context.Context, _ string) (string, error) {
+	return "", errors.New("[curl_cffi] blocked/error status=403 — datadome challenge still present after all bypass strategies")
+}
+
+func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
+	const sourceURL = "https://www.blocked-dealer.test/cars-for-sale"
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}
+	loader := config.NewLoader(t.TempDir())
+	key := sites.CacheKeyForSourceURL(sourceURL)
+	if err := loader.SaveByName(key, config.SiteConfig{
+		Name: key, BaseURL: sourceURL,
+		ListPage: config.ListPageConfig{CardSelector: ".vehicle-card"},
+	}); err != nil {
+		t.Fatalf("seed site config: %v", err)
+	}
+
+	st := store.NewMemoryResultStore()
+	staleAt := time.Now().UTC().Add(-24 * time.Hour)
+	if err := st.UpsertCachedInventory(context.Background(), store.CachedInventory{
+		SourceURL: sourceURL,
+		Items: []model.InventoryItem{
+			{Title: "2020 Audi A4", StockID: "S1", VIN: "WAUENAF40LN000001"},
+			{Title: "2021 BMW 330i", StockID: "S2", VIN: "3MW5R1J00M8000002"},
+		},
+		UpdatedAt: staleAt,
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	svc := scrape.Service{Fetcher: blockedFetcher{}, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
+	server := NewServer(cfg, zap.NewNop(), svc, loader, st, testMetrics(), nil, nil, nil)
+	r := server.Router()
+
+	runScrape := func() map[string]any {
+		body, _ := json.Marshal(map[string]any{"url": sourceURL, "timeoutSec": 10})
+		req := httptest.NewRequest(http.MethodPost, "/v1/scrape/run", bytes.NewReader(body))
+		req.Header.Set("X-Service-Key", "k")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 got %d body=%s", w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("bad response json: %v", err)
+		}
+		return resp
+	}
+
+	// 1st call: live scrape fails bot-blocked -> served from cache, URL flagged.
+	resp := runScrape()
+	if resp["source"] != "cache_fallback" {
+		t.Fatalf("expected cache_fallback source, got %v (resp=%v)", resp["source"], resp)
+	}
+	if int(resp["itemCount"].(float64)) != 2 {
+		t.Fatalf("expected 2 cached items got %v", resp["itemCount"])
+	}
+	if flagged, _ := st.IsProtectedURL(context.Background(), sourceURL); !flagged {
+		t.Fatalf("expected url flagged as protected after bot-blocked scrape")
+	}
+
+	// 2nd call: flagged -> cache served directly without a live attempt.
+	resp = runScrape()
+	if resp["source"] != "cache" {
+		t.Fatalf("expected cache source on flagged url, got %v", resp["source"])
+	}
+
+	// Pending-sync lists the flagged url because its cache is 24h old.
+	req := httptest.NewRequest(http.MethodGet, "/v1/scrape/pending-sync?maxAgeHours=12", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("pending-sync expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	var pendingResp struct {
+		Pending []struct {
+			URL      string `json:"url"`
+			HasCache bool   `json:"hasCache"`
+		} `json:"pending"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &pendingResp); err != nil {
+		t.Fatalf("bad pending json: %v", err)
+	}
+	if len(pendingResp.Pending) != 1 || pendingResp.Pending[0].URL != sourceURL || !pendingResp.Pending[0].HasCache {
+		t.Fatalf("expected 1 pending entry for %s with cache, got %+v", sourceURL, pendingResp.Pending)
+	}
+
+	// Fresh sync via /v1/scrape/sync clears it from pending.
+	syncBody, _ := json.Marshal(map[string]any{
+		"url":        sourceURL,
+		"skipUpsert": true,
+		"items": []map[string]any{
+			{"title": "2020 Audi A4", "stockId": "S1"},
+			{"title": "2021 BMW 330i", "stockId": "S2"},
+			{"title": "2019 Honda Civic", "stockId": "S3"},
+		},
+	})
+	req = httptest.NewRequest(http.MethodPost, "/v1/scrape/sync", bytes.NewReader(syncBody))
+	req.Header.Set("X-Service-Key", "k")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("sync expected 200 got %d body=%s", w.Code, w.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/v1/scrape/pending-sync?maxAgeHours=12", nil)
+	req.Header.Set("X-Service-Key", "k")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	pendingResp.Pending = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &pendingResp)
+	if len(pendingResp.Pending) != 0 {
+		t.Fatalf("expected no pending after fresh sync, got %+v", pendingResp.Pending)
+	}
+
+	// And the flagged url now serves the fresh 3-item cache.
+	resp = runScrape()
+	if resp["source"] != "cache" || int(resp["itemCount"].(float64)) != 3 {
+		t.Fatalf("expected 3-item cache serve after sync, got source=%v count=%v", resp["source"], resp["itemCount"])
+	}
+}

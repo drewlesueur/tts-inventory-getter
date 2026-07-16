@@ -3,17 +3,25 @@
 fetch_details.py — Fetch multiple detail pages in ONE Camoufox session.
 
 Reads a JSON array of URLs from stdin, opens a single Camoufox browser, navigates
-to each URL reusing the same browser (fast — one launch for N pages), and returns
-a JSON object mapping url -> html.
+to each URL reusing the same browser (fast — one launch for N pages), and streams
+results as NDJSON so a caller that kills us on deadline keeps everything fetched
+so far.
 
-Usage:  echo '["url1","url2"]' | python3.11 fetch_details.py
+Usage:  echo '["url1","url2"]' | python3.11 fetch_details.py [datadome_cookie]
 
-Stdout: JSON {"results": {"url1": "<html>", ...}, "cookie": "refreshed_datadome"}
+Stdout: one JSON object per line:
+  {"url": "...", "html": "..."}   as each page completes
+  {"done": true, "cookie": "..."} final line on clean exit
 Stderr: debug info
 """
 import sys
 import json
 import asyncio
+
+
+def emit(obj):
+    print(json.dumps(obj))
+    sys.stdout.flush()
 
 
 def is_blocked(html: str) -> bool:
@@ -67,12 +75,15 @@ DETAIL_HEADERS = {
 }
 
 
-def curl_fetch_one(url):
+def curl_fetch_one(url, cookie=""):
     """Fast detail fetch via curl_cffi (Chrome TLS). Returns (url, html|None)."""
     try:
         from curl_cffi import requests as cffi
         s = cffi.Session(impersonate="chrome124")
-        r = s.get(url, headers=DETAIL_HEADERS, timeout=30)
+        headers = dict(DETAIL_HEADERS)
+        if cookie:
+            headers["Cookie"] = f"datadome={cookie}"
+        r = s.get(url, headers=headers, timeout=30)
         if r.status_code < 400 and not is_blocked(r.text):
             return url, r.text
     except Exception as e:
@@ -114,10 +125,12 @@ async def camoufox_fetch(urls):
                 except Exception:
                     pass
                 results[url] = await page.content()
+                emit({"url": url, "html": results[url]})
                 print(f"[details] camoufox {i+1}/{len(urls)} ok {url}", file=sys.stderr)
             except Exception as e:
                 print(f"[details] camoufox FAILED {url}: {e}", file=sys.stderr)
                 results[url] = ""
+                emit({"url": url, "html": ""})
         try:
             cookies = await page.context.cookies()
             dd_cookie = next((c["value"] for c in cookies if c["name"] == "datadome"), "")
@@ -126,16 +139,18 @@ async def camoufox_fetch(urls):
     return results, dd_cookie
 
 
-async def fetch_all(urls):
+async def fetch_all(urls, cookie=""):
     import concurrent.futures
+    import functools
     results = {}
     blocked = []
 
     # 1. Fast path: curl_cffi concurrently (non-DataDome sites need no browser).
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-        for url, html in ex.map(curl_fetch_one, urls):
+        for url, html in ex.map(functools.partial(curl_fetch_one, cookie=cookie), urls):
             if html:
                 results[url] = html
+                emit({"url": url, "html": html})
             else:
                 blocked.append(url)
     print(f"[details] curl_cffi got {len(results)}/{len(urls)}; {len(blocked)} need browser", file=sys.stderr)
@@ -156,21 +171,23 @@ async def fetch_all(urls):
 
 
 def main():
+    import os
+    cookie = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DATADOME_COOKIE", "")
     raw = sys.stdin.read().strip()
     if not raw:
-        print(json.dumps({"error": "no urls on stdin"}))
+        emit({"error": "no urls on stdin"})
         sys.exit(1)
     try:
         urls = json.loads(raw)
     except Exception as e:
-        print(json.dumps({"error": f"bad json input: {e}"}))
+        emit({"error": f"bad json input: {e}"})
         sys.exit(1)
     if not isinstance(urls, list) or not urls:
-        print(json.dumps({"error": "expected non-empty JSON array of urls"}))
+        emit({"error": "expected non-empty JSON array of urls"})
         sys.exit(1)
 
-    results, cookie = asyncio.run(fetch_all(urls))
-    print(json.dumps({"results": results, "cookie": cookie}))
+    _, dd_cookie = asyncio.run(fetch_all(urls, cookie))
+    emit({"done": True, "cookie": dd_cookie})
 
 
 if __name__ == "__main__":

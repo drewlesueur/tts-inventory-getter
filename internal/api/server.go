@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,9 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("POST /v1/scrape/run", s.handleScrapeRun)
 	v1.HandleFunc("POST /v1/scrape/sync", s.handleScrapeSync)
 	v1.HandleFunc("GET /v1/scrape/cache", s.handleGetCachedInventory)
+	v1.HandleFunc("GET /v1/scrape/pending-sync", s.handlePendingSync)
+	v1.HandleFunc("GET /v1/scrape/protected", s.handleListProtected)
+	v1.HandleFunc("DELETE /v1/scrape/protected", s.handleUnflagProtected)
 	v1.HandleFunc("POST /v1/cookies/datadome", s.handleSetDataDomeCookie)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
 	v1.HandleFunc("DELETE /v1/results", s.handleClearResults)
@@ -183,6 +187,21 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Hybrid mode: bot-protected URLs are answered from the synced cache
+	// immediately, without launching a live scrape on this host.
+	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
+		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.SourceURL); cerr == nil {
+			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedIdempotencyKey, cached)
+			if err := s.store.UpsertResult(r.Context(), record); err != nil {
+				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+				return
+			}
+			s.logger.Info("scrape served from cache (hybrid)", zap.String("sourceUrl", req.SourceURL), zap.Int("items", len(record.Items)))
+			writeJSON(w, http.StatusOK, resultResponse(record))
+			return
+		}
+	}
+
 	site, err := s.resolveSiteConfig(r.Context(), req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
@@ -226,6 +245,21 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 	if existing, err := s.store.FindByIdempotency(r.Context(), scopedKey); err == nil {
 		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
 			writeJSON(w, http.StatusOK, resultResponse(existing))
+			return
+		}
+	}
+
+	// Hybrid mode: bot-protected URLs are answered from the synced cache
+	// immediately, without launching a live scrape on this host.
+	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
+		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.SourceURL); cerr == nil {
+			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedKey, cached)
+			if err := s.store.UpsertResult(r.Context(), record); err != nil {
+				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+				return
+			}
+			s.logger.Info("scrape served from cache (hybrid)", zap.String("sourceUrl", req.SourceURL), zap.Int("items", len(record.Items)))
+			writeJSON(w, http.StatusOK, resultResponse(record))
 			return
 		}
 	}
@@ -408,6 +442,83 @@ func (s *Server) handleGetCachedInventory(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handlePendingSync lists bot-protected URLs whose synced cache is missing or
+// older than ?maxAgeHours (default 12). A local residential-IP worker polls
+// this, scrapes each URL, and pushes results back via /v1/scrape/sync.
+func (s *Server) handlePendingSync(w http.ResponseWriter, r *http.Request) {
+	maxAge := 12 * time.Hour
+	if v := strings.TrimSpace(r.URL.Query().Get("maxAgeHours")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxAge = time.Duration(n) * time.Hour
+		}
+	}
+	protected, err := s.store.ListProtectedURLs(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+	// Statically configured cache-only URLs need syncing too.
+	seen := map[string]bool{}
+	urls := make([]string, 0, len(protected)+len(s.cfg.CacheOnlyURLs))
+	for _, p := range protected {
+		k := store.NormalizeURLKey(p.SourceURL)
+		if !seen[k] {
+			seen[k] = true
+			urls = append(urls, p.SourceURL)
+		}
+	}
+	for _, u := range s.cfg.CacheOnlyURLs {
+		k := store.NormalizeURLKey(u)
+		if !seen[k] {
+			seen[k] = true
+			urls = append(urls, u)
+		}
+	}
+	type pending struct {
+		URL         string `json:"url"`
+		CacheItems  int    `json:"cacheItems"`
+		CacheAgeSec int64  `json:"cacheAgeSec"`
+		HasCache    bool   `json:"hasCache"`
+	}
+	out := make([]pending, 0, len(urls))
+	for _, u := range urls {
+		cached, cerr := s.store.GetCachedInventory(r.Context(), u)
+		if cerr == nil && time.Since(cached.UpdatedAt) < maxAge {
+			continue // fresh enough
+		}
+		p := pending{URL: u}
+		if cerr == nil {
+			p.HasCache = true
+			p.CacheItems = len(cached.Items)
+			p.CacheAgeSec = int64(time.Since(cached.UpdatedAt).Seconds())
+		}
+		out = append(out, p)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "pending": out, "maxAgeHours": int(maxAge.Hours())})
+}
+
+func (s *Server) handleListProtected(w http.ResponseWriter, r *http.Request) {
+	protected, err := s.store.ListProtectedURLs(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "protected": protected})
+}
+
+func (s *Server) handleUnflagProtected(w http.ResponseWriter, r *http.Request) {
+	sourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
+	if !validURL(sourceURL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url query param is required"))
+		return
+	}
+	if err := s.store.UnflagProtectedURL(r.Context(), sourceURL); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "url": sourceURL})
+}
+
 // resolveDealerByURL looks up the dealership/account that owns a URL from the
 // inventory API page list.
 func (s *Server) resolveDealerByURL(ctx context.Context, sourceURL string) (dealershipID, accountID string, ok bool) {
@@ -438,6 +549,51 @@ func (s *Server) isCacheOnly(rawURL string) bool {
 	return false
 }
 
+// shouldServeFromCache is the hybrid-mode gate: a URL is cache-first when it is
+// statically configured (CACHE_ONLY_URLS) or was auto-flagged as bot-protected
+// after a failed live scrape on this host.
+func (s *Server) shouldServeFromCache(ctx context.Context, rawURL string) bool {
+	if s.isCacheOnly(rawURL) {
+		return true
+	}
+	protected, err := s.store.IsProtectedURL(ctx, rawURL)
+	if err != nil {
+		s.logger.Warn("protected url lookup failed", zap.String("url", rawURL), zap.Error(err))
+		return false
+	}
+	return protected
+}
+
+// isBotProtectionFailure reports whether scrape errors indicate the host is
+// bot-blocked rather than a scraping/parsing problem.
+func isBotProtectionFailure(errs []model.StructuredError) bool {
+	return scrape.IsBotProtectionFailure(errs)
+}
+
+// flagProtected records that this URL cannot be live-scraped from this host, so
+// future scrapes serve the synced cache until a local scraper pushes fresh data.
+func (s *Server) flagProtected(ctx context.Context, sourceURL, reason string) {
+	if err := s.store.FlagProtectedURL(ctx, store.ProtectedURL{SourceURL: sourceURL, Reason: reason}); err != nil {
+		s.logger.Warn("flag protected url failed", zap.String("url", sourceURL), zap.Error(err))
+		return
+	}
+	s.logger.Info("url flagged as bot-protected; serving from cache until synced",
+		zap.String("url", sourceURL), zap.String("reason", tailOf(reason, 200)))
+}
+
+func (s *Server) unflagProtected(ctx context.Context, sourceURL string) {
+	if err := s.store.UnflagProtectedURL(ctx, sourceURL); err == nil {
+		s.logger.Info("url unflagged after successful live scrape", zap.String("url", sourceURL))
+	}
+}
+
+func tailOf(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
+}
+
 func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	var req ScrapeRunRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -449,27 +605,31 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache-only URLs (e.g. DataDome-blocked from this IP) are served from the
-	// synced cache instead of live-scraping.
-	if s.isCacheOnly(req.URL) {
+	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
+	// bot-protected on this host) are served from the synced cache.
+	if s.shouldServeFromCache(r.Context(), req.URL) {
 		cached, err := s.store.GetCachedInventory(r.Context(), req.URL)
-		if errors.Is(err, store.ErrNotFound) {
-			writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is cache-only but no synced inventory exists yet"))
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":    "ok",
+				"url":       req.URL,
+				"source":    "cache",
+				"itemCount": len(cached.Items),
+				"items":     cached.Items,
+				"updatedAt": cached.UpdatedAt,
+			})
 			return
 		}
-		if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
 			writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":    "ok",
-			"url":       req.URL,
-			"source":    "cache",
-			"itemCount": len(cached.Items),
-			"items":     cached.Items,
-			"updatedAt": cached.UpdatedAt,
-		})
-		return
+		// Statically cache-only URLs never live-scrape; auto-flagged URLs fall
+		// through to a live attempt when no cache exists yet (nothing to lose).
+		if s.isCacheOnly(req.URL) {
+			writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is cache-only but no synced inventory exists yet"))
+			return
+		}
 	}
 
 	dealershipID := req.DealershipID
@@ -514,6 +674,26 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := s.scraper.ScrapeOnceWithOptions(ctx, req.URL, site, scrapeOpts)
+
+	// Hybrid mode: flag bot-blocked URLs so future scrapes go cache-first, and
+	// serve the synced cache for this request when one exists.
+	if len(result.Items) == 0 && isBotProtectionFailure(result.Errors) {
+		s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
+		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.URL); cerr == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":    "ok",
+				"url":       req.URL,
+				"source":    "cache_fallback",
+				"itemCount": len(cached.Items),
+				"items":     cached.Items,
+				"updatedAt": cached.UpdatedAt,
+				"errors":    result.Errors,
+			})
+			return
+		}
+	} else if len(result.Items) > 0 && !s.isCacheOnly(req.URL) {
+		s.unflagProtected(r.Context(), req.URL)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
@@ -659,6 +839,26 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		time.Sleep(wait)
 	}
 
+	// Hybrid mode: if the live scrape came back bot-blocked, flag the URL so the
+	// next request goes cache-first, and answer this one from the synced cache
+	// when available instead of returning an empty failure.
+	bgCtx := context.Background()
+	if len(finalRecord.Items) == 0 && isBotProtectionFailure(finalRecord.Errors) {
+		s.flagProtected(bgCtx, sourceURL, finalRecord.LastError)
+		if cached, cerr := s.store.GetCachedInventory(bgCtx, sourceURL); cerr == nil {
+			fallback := resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey, cached)
+			fallback.StartedAt = runStarted
+			fallback.AttemptCount = finalRecord.AttemptCount
+			fallback.Errors = finalRecord.Errors
+			fallback.ErrorCount = len(finalRecord.Errors)
+			finalRecord = fallback
+			s.logger.Info("scrape answered from cache after bot-protection failure (hybrid)",
+				zap.String("sourceUrl", sourceURL), zap.Int("items", len(finalRecord.Items)))
+		}
+	} else if len(finalRecord.Items) > 0 && !s.isCacheOnly(sourceURL) {
+		s.unflagProtected(bgCtx, sourceURL)
+	}
+
 	if err := s.store.UpsertResult(context.Background(), finalRecord); err != nil {
 		s.logger.Error("result store upsert failed", zap.String("resultId", resultID), zap.Error(err))
 		return
@@ -667,6 +867,26 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	s.metrics.RunDuration.WithLabelValues(dealershipID).Observe(finalDur)
 	s.metrics.ItemsScraped.WithLabelValues(dealershipID).Add(float64(finalRecord.TotalItems))
 	s.logger.Info("scrape completed", zap.String("resultId", resultID), zap.Int("attempts", finalRecord.AttemptCount), zap.Int("items", len(finalRecord.Items)), zap.Int("uniqueVinCount", finalRecord.TotalItems), zap.Int("errors", len(finalRecord.Errors)))
+}
+
+// resultFromCache builds a completed scrape result from synced cached inventory.
+func resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey string, cached store.CachedInventory) model.ScrapeResult {
+	now := time.Now().UTC()
+	count := model.ScrapedInventoryCount(cached.Items)
+	return model.ScrapeResult{
+		ResultID:       resultID,
+		DealershipID:   dealershipID,
+		SourceURL:      sourceURL,
+		Status:         model.RunStatusSuccess,
+		StartedAt:      now,
+		FinishedAt:     now,
+		TotalItems:     count,
+		SuccessItems:   count,
+		AttemptCount:   1,
+		IdempotencyKey: idempotencyKey,
+		Items:          cached.Items,
+		ProgressStage:  "completed_from_cache",
+	}
 }
 
 func firstErrorMessage(errs []model.StructuredError) string {

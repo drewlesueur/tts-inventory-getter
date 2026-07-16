@@ -3,19 +3,55 @@ package store
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
 type MemoryResultStore struct {
-	mu     sync.RWMutex
-	byID   map[string]model.ScrapeResult
-	byIdem map[string]string
-	cache  map[string]CachedInventory
+	mu        sync.RWMutex
+	byID      map[string]model.ScrapeResult
+	byIdem    map[string]string
+	cache     map[string]CachedInventory
+	protected map[string]ProtectedURL
 }
 
 func NewMemoryResultStore() *MemoryResultStore {
-	return &MemoryResultStore{byID: map[string]model.ScrapeResult{}, byIdem: map[string]string{}, cache: map[string]CachedInventory{}}
+	return &MemoryResultStore{byID: map[string]model.ScrapeResult{}, byIdem: map[string]string{}, cache: map[string]CachedInventory{}, protected: map[string]ProtectedURL{}}
+}
+
+func (m *MemoryResultStore) FlagProtectedURL(_ context.Context, p ProtectedURL) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p.FlaggedAt.IsZero() {
+		p.FlaggedAt = time.Now().UTC()
+	}
+	m.protected[NormalizeURLKey(p.SourceURL)] = p
+	return nil
+}
+
+func (m *MemoryResultStore) UnflagProtectedURL(_ context.Context, sourceURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.protected, NormalizeURLKey(sourceURL))
+	return nil
+}
+
+func (m *MemoryResultStore) IsProtectedURL(_ context.Context, sourceURL string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.protected[NormalizeURLKey(sourceURL)]
+	return ok, nil
+}
+
+func (m *MemoryResultStore) ListProtectedURLs(_ context.Context) ([]ProtectedURL, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ProtectedURL, 0, len(m.protected))
+	for _, p := range m.protected {
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func (m *MemoryResultStore) UpsertCachedInventory(_ context.Context, c CachedInventory) error {

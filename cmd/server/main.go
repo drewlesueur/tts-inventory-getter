@@ -229,11 +229,18 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 		var res scrape.RunResult
 		started := time.Now().UTC()
 
-		if _, isCacheOnly := cacheOnly[store.NormalizeURLKey(p.URL)]; isCacheOnly {
-			// Serve from the synced cache instead of live-scraping.
+		// Hybrid mode: statically cache-only URLs and URLs auto-flagged as
+		// bot-protected on this host are served from the synced cache.
+		_, useCache := cacheOnly[store.NormalizeURLKey(p.URL)]
+		if !useCache {
+			if flagged, ferr := resultStore.IsProtectedURL(context.Background(), p.URL); ferr == nil && flagged {
+				useCache = true
+			}
+		}
+		if useCache {
 			cached, cerr := resultStore.GetCachedInventory(context.Background(), p.URL)
 			if cerr != nil {
-				logger.Warn("cache-only url has no cached inventory, skipping",
+				logger.Warn("cache-first url has no cached inventory, skipping",
 					zap.String("job", jobName), zap.String("url", p.URL), zap.Error(cerr))
 				continue
 			}
@@ -258,6 +265,23 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 				EnableAIEnrichment: scraper.AIEnricher != nil,
 			})
 			runCancel()
+
+			// Hybrid mode: bot-blocked -> flag for cache-first and fall back to
+			// any synced cache instead of upserting an empty result.
+			if len(res.Items) == 0 && scrape.IsBotProtectionFailure(res.Errors) {
+				if ferr := resultStore.FlagProtectedURL(context.Background(), store.ProtectedURL{SourceURL: p.URL, Reason: "bot-blocked in scheduled job"}); ferr == nil {
+					logger.Info("url flagged as bot-protected by scheduled job", zap.String("job", jobName), zap.String("url", p.URL))
+				}
+				if cached, cerr := resultStore.GetCachedInventory(context.Background(), p.URL); cerr == nil {
+					res = scrape.RunResult{Items: cached.Items}
+					logger.Info("served from cache after bot-protection failure",
+						zap.String("job", jobName), zap.String("url", p.URL), zap.Int("items", len(cached.Items)))
+				} else {
+					logger.Warn("bot-blocked with no cache; skipping upsert of empty result",
+						zap.String("job", jobName), zap.String("url", p.URL))
+					continue
+				}
+			}
 		}
 
 		record := model.ScrapeResult{

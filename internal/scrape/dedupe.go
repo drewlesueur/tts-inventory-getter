@@ -172,7 +172,24 @@ func dedupeKey(it model.InventoryItem) string {
 	if img != "" {
 		return "img:" + img
 	}
+	// Last resort: a content key so an item with no stock/VIN/URL/image (e.g. a
+	// listing whose detail fetch dropped its URL) is never silently discarded.
+	// Distinct enough to avoid merging different vehicles; stable across the two
+	// Dedupe passes since these fields don't change between them.
+	if c := contentKey(it); c != "" {
+		return "content:" + c
+	}
 	return ""
+}
+
+func contentKey(it model.InventoryItem) string {
+	parts := []string{it.Title, it.Year, it.Make, it.Model, it.Mileage, it.Price}
+	joined := strings.ToLower(strings.TrimSpace(strings.Join(parts, "|")))
+	// "|||||" (all empty) carries no identity — treat as empty.
+	if strings.Trim(joined, "|") == "" {
+		return ""
+	}
+	return joined
 }
 
 func canonicalURLKey(raw string) string {

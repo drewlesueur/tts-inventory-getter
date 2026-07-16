@@ -55,6 +55,28 @@ func TestDedupe_PrefersStockKeyOverVINToMergeVariants(t *testing.T) {
 	}
 }
 
+func TestDedupe_KeepsItemWithNoStockVINURLOrImage(t *testing.T) {
+	// A car with no stock, VIN, URL, or image (e.g. its detail fetch dropped the
+	// URL) must NOT be silently discarded — it has to survive on a content key.
+	items := []model.InventoryItem{
+		{StockID: "11434", Title: "2011 Chevrolet Impala LT", VIN: "2G1WG5EK9B1303954"},
+		{Title: "2011 Mitsubishi Lancer", Year: "2011", Make: "Mitsubishi", Model: "Lancer", Mileage: "98,000", Price: "$6,995"},
+	}
+	out := Dedupe(items)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 items (keyless car retained), got %d", len(out))
+	}
+	var sawLancer bool
+	for _, it := range out {
+		if it.Title == "2011 Mitsubishi Lancer" {
+			sawLancer = true
+		}
+	}
+	if !sawLancer {
+		t.Fatalf("expected the no-ID Lancer to survive dedupe, got %#v", out)
+	}
+}
+
 func TestDedupe_ReplacesPriceOnlyTitleWithVehicleTitle(t *testing.T) {
 	items := []model.InventoryItem{
 		{StockID: "7026", Title: "$666,399", Price: "$666,399", URL: "https://dealer.test/vehicle-details/2024-lamborghini-revuelto-7026/"},

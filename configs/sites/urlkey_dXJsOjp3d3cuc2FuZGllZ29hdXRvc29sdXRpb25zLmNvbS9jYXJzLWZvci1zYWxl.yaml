@@ -1,0 +1,38 @@
+name: url::www.sandiegoautosolutions.com/cars-for-sale
+baseUrl: https://www.sandiegoautosolutions.com/cars-for-sale
+listPage:
+    waitSelectors:
+        - li.vehicle-snapshot
+    cardSelector: li.vehicle-snapshot
+    titleSelector: .vehicle-snapshot__title
+    urlSelector: a[href*='/details/']
+    stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
+    priceSelector: .vehicle-snapshot__main-info-item:first-child .vehicle-snapshot__main-info
+    mileageSelector: .vehicle-snapshot__main-info-item:nth-child(2) .vehicle-snapshot__main-info
+    imageSelector: .vehicle-snapshot__image img
+    totalSelector: ""
+    pagination:
+        # pagination is a JS form POST ("Page X of Y" + Next button with a bare
+        # href); pages are collected via synthesized GET ?PageNumber=N urls
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src]
+        - img[src*='vehicle']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)
+    vin:
+        - \\b([A-HJ-NPR-Z0-9]{17})\\b
+discovery:
+    notes: DealerCenter/carsforsale.com platform (same as saiautosale.com); DataDome-protected, fetched via Camoufox
+    discoveredAt: "2026-07-17T00:00:00Z"
