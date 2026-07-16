@@ -301,28 +301,33 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	// curl_cffi with the cookie first, then falls back to Camoufox (which bypasses
 	// DataDome without any cookie). Always route through it when available, even
 	// with no cookie, since Camoufox needs none.
+	var html string
+	var renderErr error
+	source := "none"
+
 	if s.Fetcher != nil {
 		if cf, ok := s.Fetcher.(interface {
 			FetchWithCookie(context.Context, string, string) (string, error)
 		}); ok {
-			html, err := cf.FetchWithCookie(ctx, pageURL, cookieHeader(cookies))
-			if err != nil {
-				return "", fmt.Errorf("fetch failed: %w", err)
+			h, err := cf.FetchWithCookie(ctx, pageURL, cookieHeader(cookies))
+			if err == nil {
+				if isDataDomeChallenge(h) {
+					return "", fmt.Errorf("datadome challenge still present after all bypass strategies")
+				}
+				if s.Logger != nil {
+					s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_camoufox"), zap.Int("cardCount", countCards(h, site.ListPage.CardSelector)))
+				}
+				return h, nil
 			}
-			if isDataDomeChallenge(html) {
-				return "", fmt.Errorf("datadome challenge still present after all bypass strategies")
-			}
+			// The Python fetch layer failed (missing binary, script error, or
+			// block). Don't give up: non-protected sites render fine in the Go
+			// browsers below, so a Python misconfig must not break them.
+			renderErr = fmt.Errorf("fetch failed: %w", err)
 			if s.Logger != nil {
-				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_camoufox"), zap.Int("cardCount", countCards(html, site.ListPage.CardSelector)))
+				s.Logger.Warn("python fetch layer failed; falling back to Go browsers", zap.String("url", pageURL), zap.Error(err))
 			}
-			return html, nil
 		}
 	}
-
-	// No cookies: try browsers then plain HTTP fallback.
-	var html string
-	var renderErr error
-	source := "none"
 
 	primary := s.Browser
 	secondary := s.AltBrowser

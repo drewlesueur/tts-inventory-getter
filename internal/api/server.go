@@ -68,6 +68,7 @@ func (s *Server) Router() http.Handler {
 	v1.HandleFunc("GET /v1/scrape/cache", s.handleGetCachedInventory)
 	v1.HandleFunc("GET /v1/scrape/pending-sync", s.handlePendingSync)
 	v1.HandleFunc("GET /v1/scrape/protected", s.handleListProtected)
+	v1.HandleFunc("POST /v1/scrape/protected", s.handleFlagProtected)
 	v1.HandleFunc("DELETE /v1/scrape/protected", s.handleUnflagProtected)
 	v1.HandleFunc("POST /v1/cookies/datadome", s.handleSetDataDomeCookie)
 	v1.HandleFunc("GET /v1/results/", s.handleGetResult)
@@ -506,6 +507,32 @@ func (s *Server) handleListProtected(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "protected": protected})
 }
 
+// handleFlagProtected manually marks a URL as bot-protected so it is served
+// cache-first without waiting for a live scrape to fail.
+func (s *Server) handleFlagProtected(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL    string `json:"url"`
+		Reason string `json:"reason"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", err.Error()))
+		return
+	}
+	if !validURL(req.URL) {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "valid url is required"))
+		return
+	}
+	if req.Reason == "" {
+		req.Reason = "manually flagged"
+	}
+	if err := s.store.FlagProtectedURL(r.Context(), store.ProtectedURL{SourceURL: req.URL, Reason: req.Reason}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+	s.logger.Info("url manually flagged as bot-protected", zap.String("url", req.URL))
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "url": req.URL})
+}
+
 func (s *Server) handleUnflagProtected(w http.ResponseWriter, r *http.Request) {
 	sourceURL := strings.TrimSpace(r.URL.Query().Get("url"))
 	if !validURL(sourceURL) {
@@ -550,8 +577,9 @@ func (s *Server) isCacheOnly(rawURL string) bool {
 }
 
 // shouldServeFromCache is the hybrid-mode gate: a URL is cache-first when it is
-// statically configured (CACHE_ONLY_URLS) or was auto-flagged as bot-protected
-// after a failed live scrape on this host.
+// statically configured (CACHE_ONLY_URLS) or its domain was flagged as
+// bot-protected. Flags apply to the whole domain: once any URL on a host is
+// DataDome-labeled, every URL on that host skips live scraping.
 func (s *Server) shouldServeFromCache(ctx context.Context, rawURL string) bool {
 	if s.isCacheOnly(rawURL) {
 		return true
@@ -561,7 +589,31 @@ func (s *Server) shouldServeFromCache(ctx context.Context, rawURL string) bool {
 		s.logger.Warn("protected url lookup failed", zap.String("url", rawURL), zap.Error(err))
 		return false
 	}
-	return protected
+	if protected {
+		return true
+	}
+	host := hostnameOf(rawURL)
+	if host == "" {
+		return false
+	}
+	list, err := s.store.ListProtectedURLs(ctx)
+	if err != nil {
+		return false
+	}
+	for _, p := range list {
+		if hostnameOf(p.SourceURL) == host {
+			return true
+		}
+	}
+	return false
+}
+
+func hostnameOf(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
 }
 
 // isBotProtectionFailure reports whether scrape errors indicate the host is
@@ -675,10 +727,12 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 
 	result := s.scraper.ScrapeOnceWithOptions(ctx, req.URL, site, scrapeOpts)
 
-	// Hybrid mode: flag bot-blocked URLs so future scrapes go cache-first, and
-	// serve the synced cache for this request when one exists.
-	if len(result.Items) == 0 && isBotProtectionFailure(result.Errors) {
-		s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
+	// Hybrid mode: a failed live scrape never returns empty when a synced cache
+	// exists. Bot-blocked failures additionally flag the URL for cache-first.
+	if len(result.Items) == 0 {
+		if isBotProtectionFailure(result.Errors) {
+			s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
+		}
 		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.URL); cerr == nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
@@ -839,12 +893,14 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		time.Sleep(wait)
 	}
 
-	// Hybrid mode: if the live scrape came back bot-blocked, flag the URL so the
-	// next request goes cache-first, and answer this one from the synced cache
-	// when available instead of returning an empty failure.
+	// Hybrid mode: a failed live scrape never returns empty when a synced cache
+	// exists — answer from cache. Bot-blocked failures additionally flag the URL
+	// so the next request goes cache-first without a live attempt.
 	bgCtx := context.Background()
-	if len(finalRecord.Items) == 0 && isBotProtectionFailure(finalRecord.Errors) {
-		s.flagProtected(bgCtx, sourceURL, finalRecord.LastError)
+	if len(finalRecord.Items) == 0 {
+		if isBotProtectionFailure(finalRecord.Errors) {
+			s.flagProtected(bgCtx, sourceURL, finalRecord.LastError)
+		}
 		if cached, cerr := s.store.GetCachedInventory(bgCtx, sourceURL); cerr == nil {
 			fallback := resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey, cached)
 			fallback.StartedAt = runStarted
@@ -852,10 +908,10 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			fallback.Errors = finalRecord.Errors
 			fallback.ErrorCount = len(finalRecord.Errors)
 			finalRecord = fallback
-			s.logger.Info("scrape answered from cache after bot-protection failure (hybrid)",
+			s.logger.Info("scrape answered from cache after live failure (hybrid)",
 				zap.String("sourceUrl", sourceURL), zap.Int("items", len(finalRecord.Items)))
 		}
-	} else if len(finalRecord.Items) > 0 && !s.isCacheOnly(sourceURL) {
+	} else if !s.isCacheOnly(sourceURL) {
 		s.unflagProtected(bgCtx, sourceURL)
 	}
 
