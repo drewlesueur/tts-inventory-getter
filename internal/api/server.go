@@ -191,7 +191,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 	// Hybrid mode: bot-protected URLs are answered from the synced cache
 	// immediately, without launching a live scrape on this host.
 	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
-		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.SourceURL); cerr == nil {
+		if cached, cerr := s.cachedInventoryFor(r.Context(), req.SourceURL); cerr == nil {
 			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedIdempotencyKey, cached)
 			if err := s.store.UpsertResult(r.Context(), record); err != nil {
 				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
@@ -253,7 +253,7 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 	// Hybrid mode: bot-protected URLs are answered from the synced cache
 	// immediately, without launching a live scrape on this host.
 	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
-		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.SourceURL); cerr == nil {
+		if cached, cerr := s.cachedInventoryFor(r.Context(), req.SourceURL); cerr == nil {
 			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedKey, cached)
 			if err := s.store.UpsertResult(r.Context(), record); err != nil {
 				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
@@ -609,11 +609,27 @@ func (s *Server) shouldServeFromCache(ctx context.Context, rawURL string) bool {
 }
 
 func hostnameOf(rawURL string) string {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return ""
+	return store.HostOf(rawURL)
+}
+
+// cachedInventoryFor looks up synced cache for a URL. The cache is URL-driven,
+// not account-driven: an exact-URL miss falls back to the freshest cache entry
+// on the same host, so www/non-www, http/https, and alternate inventory paths
+// registered by different accounts all hit the same domain-wide cache.
+func (s *Server) cachedInventoryFor(ctx context.Context, rawURL string) (store.CachedInventory, error) {
+	cached, err := s.store.GetCachedInventory(ctx, rawURL)
+	if err == nil {
+		return cached, nil
 	}
-	return strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
+	if !errors.Is(err, store.ErrNotFound) {
+		return store.CachedInventory{}, err
+	}
+	if cached, herr := s.store.GetCachedInventoryByHost(ctx, hostnameOf(rawURL)); herr == nil {
+		s.logger.Info("cache served via host fallback (hybrid)",
+			zap.String("requestedUrl", rawURL), zap.String("cachedUrl", cached.SourceURL))
+		return cached, nil
+	}
+	return store.CachedInventory{}, err
 }
 
 // isBotProtectionFailure reports whether scrape errors indicate the host is
@@ -660,7 +676,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
 	// bot-protected on this host) are served from the synced cache.
 	if s.shouldServeFromCache(r.Context(), req.URL) {
-		cached, err := s.store.GetCachedInventory(r.Context(), req.URL)
+		cached, err := s.cachedInventoryFor(r.Context(), req.URL)
 		if err == nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
@@ -733,7 +749,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		if isBotProtectionFailure(result.Errors) {
 			s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
 		}
-		if cached, cerr := s.store.GetCachedInventory(r.Context(), req.URL); cerr == nil {
+		if cached, cerr := s.cachedInventoryFor(r.Context(), req.URL); cerr == nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
 				"url":       req.URL,
@@ -901,7 +917,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		if isBotProtectionFailure(finalRecord.Errors) {
 			s.flagProtected(bgCtx, sourceURL, finalRecord.LastError)
 		}
-		if cached, cerr := s.store.GetCachedInventory(bgCtx, sourceURL); cerr == nil {
+		if cached, cerr := s.cachedInventoryFor(bgCtx, sourceURL); cerr == nil {
 			fallback := resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey, cached)
 			fallback.StartedAt = runStarted
 			fallback.AttemptCount = finalRecord.AttemptCount

@@ -145,3 +145,59 @@ func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 		t.Fatalf("expected 3-item cache serve after sync, got source=%v count=%v", resp["source"], resp["itemCount"])
 	}
 }
+
+// The cache is URL-driven, not account-driven: a URL variant (non-www, http,
+// different inventory path) registered by another account must hit the same
+// domain-wide cache instead of live-scraping a bot-protected host.
+func TestHybridCacheServesURLVariantsOnSameHost(t *testing.T) {
+	const cachedURL = "https://www.blocked-dealer.test/cars-for-sale"
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}
+	loader := config.NewLoader(t.TempDir())
+
+	st := store.NewMemoryResultStore()
+	if err := st.UpsertCachedInventory(context.Background(), store.CachedInventory{
+		SourceURL: cachedURL,
+		Items: []model.InventoryItem{
+			{Title: "2020 Audi A4", StockID: "S1", VIN: "WAUENAF40LN000001"},
+			{Title: "2021 BMW 330i", StockID: "S2", VIN: "3MW5R1J00M8000002"},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	if err := st.FlagProtectedURL(context.Background(), store.ProtectedURL{SourceURL: cachedURL, Reason: "datadome"}); err != nil {
+		t.Fatalf("flag protected: %v", err)
+	}
+
+	svc := scrape.Service{Fetcher: blockedFetcher{}, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
+	server := NewServer(cfg, zap.NewNop(), svc, loader, st, testMetrics(), nil, nil, nil)
+	r := server.Router()
+
+	variants := []string{
+		"https://blocked-dealer.test/cars-for-sale",      // no www
+		"http://www.blocked-dealer.test/cars-for-sale",   // http
+		"https://www.blocked-dealer.test/cars-for-sale/", // trailing slash
+		"https://blocked-dealer.test/inventory",          // different path
+	}
+	for _, variant := range variants {
+		body, _ := json.Marshal(map[string]any{"url": variant, "timeoutSec": 10})
+		req := httptest.NewRequest(http.MethodPost, "/v1/scrape/run", bytes.NewReader(body))
+		req.Header.Set("X-Service-Key", "k")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200 got %d body=%s", variant, w.Code, w.Body.String())
+		}
+		var resp map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("%s: bad response json: %v", variant, err)
+		}
+		if resp["source"] != "cache" {
+			t.Fatalf("%s: expected cache source, got %v (resp=%v)", variant, resp["source"], resp)
+		}
+		if int(resp["itemCount"].(float64)) != 2 {
+			t.Fatalf("%s: expected 2 cached items got %v", variant, resp["itemCount"])
+		}
+	}
+}

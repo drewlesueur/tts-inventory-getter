@@ -71,6 +71,29 @@ func (m *MemoryResultStore) GetCachedInventory(_ context.Context, sourceURL stri
 	return c, nil
 }
 
+func (m *MemoryResultStore) GetCachedInventoryByHost(_ context.Context, host string) (CachedInventory, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if host == "" {
+		return CachedInventory{}, ErrNotFound
+	}
+	var best CachedInventory
+	found := false
+	for _, c := range m.cache {
+		if HostOf(c.SourceURL) != host {
+			continue
+		}
+		if !found || c.UpdatedAt.After(best.UpdatedAt) {
+			best = c
+			found = true
+		}
+	}
+	if !found {
+		return CachedInventory{}, ErrNotFound
+	}
+	return best, nil
+}
+
 func (m *MemoryResultStore) UpsertResult(_ context.Context, result model.ScrapeResult) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

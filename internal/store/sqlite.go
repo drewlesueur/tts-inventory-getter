@@ -228,6 +228,39 @@ func (s *SQLiteResultStore) GetCachedInventory(ctx context.Context, sourceURL st
 	return out, nil
 }
 
+func (s *SQLiteResultStore) GetCachedInventoryByHost(ctx context.Context, host string) (CachedInventory, error) {
+	if host == "" {
+		return CachedInventory{}, ErrNotFound
+	}
+	const q = `SELECT source_url, dealership_id, account_id, items_json, updated_at FROM cached_inventory ORDER BY updated_at DESC`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return CachedInventory{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var out CachedInventory
+		var itemsJSON, updatedAt string
+		if err := rows.Scan(&out.SourceURL, &out.DealershipID, &out.AccountID, &itemsJSON, &updatedAt); err != nil {
+			return CachedInventory{}, err
+		}
+		if HostOf(out.SourceURL) != host {
+			continue
+		}
+		if err := json.Unmarshal([]byte(itemsJSON), &out.Items); err != nil {
+			return CachedInventory{}, err
+		}
+		if updatedAt != "" {
+			out.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		}
+		return out, nil
+	}
+	if err := rows.Err(); err != nil {
+		return CachedInventory{}, err
+	}
+	return CachedInventory{}, ErrNotFound
+}
+
 func (s *SQLiteResultStore) FlagProtectedURL(ctx context.Context, p ProtectedURL) error {
 	flaggedAt := p.FlaggedAt
 	if flaggedAt.IsZero() {

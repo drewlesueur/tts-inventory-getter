@@ -31,8 +31,8 @@ func TestScrapeOnce_SynthesizesPageNumberParamPagination(t *testing.T) {
 	svc := Service{
 		Fetcher: pageFetcher{pages: map[string]string{
 			"https://dealer.test/cars-for-sale":              page1,
-			"https://dealer.test/cars-for-sale?PageNumber=2": page2,
-			"https://dealer.test/cars-for-sale?PageNumber=3": page3,
+			"https://dealer.test/cars-for-sale?PageNumber=2&PageSize=100": page2,
+			"https://dealer.test/cars-for-sale?PageNumber=3&PageSize=100": page3,
 		}},
 		DetailFetcher: HTMLDetailFetcher{Fetcher: pageFetcher{}},
 		Extractors:    []Extractor{DOMExtractor{}},

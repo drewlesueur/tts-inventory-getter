@@ -20,6 +20,9 @@ type ResultStore interface {
 	// Cached inventory pushed from an external (e.g. local) scraper for a source URL.
 	UpsertCachedInventory(ctx context.Context, c CachedInventory) error
 	GetCachedInventory(ctx context.Context, sourceURL string) (CachedInventory, error)
+	// GetCachedInventoryByHost returns the freshest cached inventory whose
+	// source URL is on the given host (see HostOf), regardless of exact path.
+	GetCachedInventoryByHost(ctx context.Context, host string) (CachedInventory, error)
 
 	// Protected URLs: sources auto-flagged as bot-protected (e.g. DataDome) on
 	// this host, so scrapes are served from the synced cache instead of live.
@@ -60,4 +63,15 @@ func NormalizeURLKey(raw string) string {
 	}
 	u.Fragment = ""
 	return u.String()
+}
+
+// HostOf extracts a normalized hostname (lowercase, www. stripped) from a URL.
+// It is the domain-level key used to match cache entries and protected flags
+// across URL variants (http/https, www/non-www, differing paths).
+func HostOf(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimPrefix(u.Hostname(), "www."))
 }

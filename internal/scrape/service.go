@@ -445,6 +445,14 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 				if ferr != nil {
 					return ferr
 				}
+				// The DealerCenter platform sometimes ignores ?PageNumber=N and
+				// re-serves page 1; treat a page-number mismatch as a failed
+				// fetch so it retries instead of silently duplicating page 1.
+				if want := pageNumberParam(nextURL); want > 1 {
+					if got := currentPageFromHTML(pageHTML); got > 0 && got != want {
+						return fmt.Errorf("requested page %d but got page %d", want, got)
+					}
+				}
 				h = pageHTML
 				return nil
 			})
@@ -618,7 +626,9 @@ var pageXofYRe = regexp.MustCompile(`(?i)\bpage\s+(\d+)\s+of\s+(\d+)`)
 // extractPageNumberParamURLs handles DealerCenter/carsforsale-platform dealer
 // sites whose pagination is a JS form POST with no crawlable page hrefs. The
 // pagination widget shows "Page X of Y" and the server also accepts GET
-// ?PageNumber=N, so we synthesize the next page URL from that text.
+// ?PageNumber=N, so we synthesize every remaining page URL from that text.
+// Emitting all pages (not just the next) means one bad fetch can't halt the
+// walk — the site sometimes ignores PageNumber and re-serves page 1.
 func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string {
 	pagText := doc.Find("[class*='pagination']").Text()
 	m := pageXofYRe.FindStringSubmatch(pagText)
@@ -634,10 +644,44 @@ func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string 
 	if err != nil {
 		return nil
 	}
-	q := u.Query()
-	q.Set("PageNumber", strconv.Itoa(cur+1))
-	u.RawQuery = q.Encode()
-	return []string{u.String()}
+	out := make([]string, 0, total-cur)
+	for p := cur + 1; p <= total; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("PageNumber", strconv.Itoa(p))
+		// The platform's own invSize() script rewrites any URL lacking PageSize
+		// via location.replace(url+"?PageSize=100"), mangling ?PageNumber=N into
+		// a malformed double-? URL that resets to page 1 when rendered in a
+		// browser. Including PageSize keeps that script inert.
+		if q.Get("PageSize") == "" {
+			q.Set("PageSize", "100")
+		}
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// pageNumberParam returns the PageNumber query value of a URL, 0 if absent.
+func pageNumberParam(rawURL string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	return parsePositiveInt(u.Query().Get("PageNumber"))
+}
+
+// currentPageFromHTML reads the "Page X of Y" widget, 0 if not present.
+func currentPageFromHTML(html string) int {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return 0
+	}
+	m := pageXofYRe.FindStringSubmatch(doc.Find("[class*='pagination']").Text())
+	if len(m) < 3 {
+		return 0
+	}
+	return parsePositiveInt(m[1])
 }
 
 func extractDealerSyncPageURLs(pageURL string, doc *goquery.Document) []string {

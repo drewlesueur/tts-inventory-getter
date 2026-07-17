@@ -72,6 +72,7 @@ func TestScrapeOnce_ReportsCardCountsWhileCollectingPages(t *testing.T) {
 	if len(res.Items) != 3 {
 		t.Fatalf("expected 3 items from paginated pages got %d errs=%+v", len(res.Items), res.Errors)
 	}
+
 	var sawFirstPage, sawSecondPage bool
 	for _, p := range progress {
 		if p.Stage == "pages_collected" && p.TotalItems == 1 {

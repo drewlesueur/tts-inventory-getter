@@ -66,6 +66,17 @@ def one_pass():
             if not items:
                 print(f"[hybrid] SKIP {u}: local scrape returned 0 items, errors={[e.get('code') for e in errors]}")
                 continue
+            # Don't clobber a good cache with a partial scrape (e.g. pagination
+            # failed and only page 1 came back).
+            try:
+                from urllib.parse import quote
+                existing = call(CLOUD_URL, f"/v1/scrape/cache?url={quote(u, safe='')}", None)
+                prev = existing.get("itemCount") or 0
+            except Exception:
+                prev = 0
+            if prev > 0 and len(items) < prev * 0.6:
+                print(f"[hybrid] SKIP {u}: scrape returned {len(items)} but cache has {prev} — looks partial, not overwriting")
+                continue
             payload = {"url": u, "items": items}
             if SKIP_UPSERT:
                 payload["skipUpsert"] = True
