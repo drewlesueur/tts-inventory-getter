@@ -180,29 +180,15 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
 	}
-	scopedIdempotencyKey := scopedIdempotencyKey(req.IdempotencyKey, req.DealershipID, req.SourceURL)
-	if existing, err := s.store.FindByIdempotency(r.Context(), scopedIdempotencyKey); err == nil {
-		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
-			writeJSON(w, http.StatusOK, resultResponse(existing))
-			return
-		}
+	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
+		writeJSON(w, http.StatusOK, resultResponse(existing))
+		return
 	}
-
-	// Hybrid mode: bot-protected URLs are answered from the synced cache
-	// immediately, without launching a live scrape on this host.
-	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
-		if cached, cerr := s.cachedInventoryFor(r.Context(), req.SourceURL); cerr == nil {
-			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedIdempotencyKey, cached)
-			if err := s.store.UpsertResult(r.Context(), record); err != nil {
-				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
-				return
-			}
-			s.logger.Info("scrape served from cache (hybrid)", zap.String("sourceUrl", req.SourceURL), zap.Int("items", len(record.Items)))
-			writeJSON(w, http.StatusOK, resultResponse(record))
-			return
-		}
+	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		return
 	}
-
 	site, err := s.resolveSiteConfig(r.Context(), req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
@@ -212,7 +198,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedIdempotencyKey, ProgressStage: "accepted"}
+	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
@@ -223,7 +209,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedIdempotencyKey, site, timeout, req.Options)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
 }
 
@@ -242,29 +228,15 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
 	}
-	scopedKey := scopedIdempotencyKey(req.IdempotencyKey, req.DealershipID, req.SourceURL)
-	if existing, err := s.store.FindByIdempotency(r.Context(), scopedKey); err == nil {
-		if idempotencyTargetMatches(existing, req.DealershipID, req.SourceURL) {
-			writeJSON(w, http.StatusOK, resultResponse(existing))
-			return
-		}
+	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
+		writeJSON(w, http.StatusOK, resultResponse(existing))
+		return
 	}
-
-	// Hybrid mode: bot-protected URLs are answered from the synced cache
-	// immediately, without launching a live scrape on this host.
-	if s.shouldServeFromCache(r.Context(), req.SourceURL) {
-		if cached, cerr := s.cachedInventoryFor(r.Context(), req.SourceURL); cerr == nil {
-			record := resultFromCache(uuid.NewString(), req.DealershipID, req.SourceURL, scopedKey, cached)
-			if err := s.store.UpsertResult(r.Context(), record); err != nil {
-				writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
-				return
-			}
-			s.logger.Info("scrape served from cache (hybrid)", zap.String("sourceUrl", req.SourceURL), zap.Int("items", len(record.Items)))
-			writeJSON(w, http.StatusOK, resultResponse(record))
-			return
-		}
+	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		return
 	}
-
 	site, err := s.resolveSiteConfig(r.Context(), req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
@@ -274,7 +246,7 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: scopedKey, ProgressStage: "accepted"}
+	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
@@ -285,7 +257,7 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, scopedKey, site, timeout, req.Options)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options)
 
 	// Poll until the scrape finishes (or the request context is cancelled).
 	pollCtx, pollCancel := context.WithTimeout(r.Context(), timeout+30*time.Second)
@@ -909,25 +881,10 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		time.Sleep(wait)
 	}
 
-	// Hybrid mode: a failed live scrape never returns empty when a synced cache
-	// exists — answer from cache. Bot-blocked failures additionally flag the URL
-	// so the next request goes cache-first without a live attempt.
+	// Scrape-once endpoints are live-only: never replace a failed live result
+	// with previously cached products.
 	bgCtx := context.Background()
-	if len(finalRecord.Items) == 0 {
-		if isBotProtectionFailure(finalRecord.Errors) {
-			s.flagProtected(bgCtx, sourceURL, finalRecord.LastError)
-		}
-		if cached, cerr := s.cachedInventoryFor(bgCtx, sourceURL); cerr == nil {
-			fallback := resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey, cached)
-			fallback.StartedAt = runStarted
-			fallback.AttemptCount = finalRecord.AttemptCount
-			fallback.Errors = finalRecord.Errors
-			fallback.ErrorCount = len(finalRecord.Errors)
-			finalRecord = fallback
-			s.logger.Info("scrape answered from cache after live failure (hybrid)",
-				zap.String("sourceUrl", sourceURL), zap.Int("items", len(finalRecord.Items)))
-		}
-	} else if !s.isCacheOnly(sourceURL) {
+	if len(finalRecord.Items) > 0 && !s.isCacheOnly(sourceURL) {
 		s.unflagProtected(bgCtx, sourceURL)
 	}
 
@@ -1059,7 +1016,11 @@ func (s *Server) handleClearResults(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "results cleared"})
+	if err := s.store.ClearCachedInventory(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "message": "results and product cache cleared"})
 }
 
 func (s *Server) handleClearSiteConfigCache(w http.ResponseWriter, r *http.Request) {
@@ -1185,6 +1146,26 @@ func scopedIdempotencyKey(rawKey, dealershipID, sourceURL string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s|%s|%s", rawKey, strings.ToLower(strings.TrimSpace(dealershipID)), normalizeSourceURL(canonicalSourceURL(dealershipID, sourceURL)))
+}
+
+const scrapeOnceCacheTTL = 24 * time.Hour
+
+func scrapeOnceCacheKey(dealershipID, sourceURL string) string {
+	return fmt.Sprintf("scrape-once-cache|%s|%s", strings.ToLower(strings.TrimSpace(dealershipID)), normalizeSourceURL(canonicalSourceURL(dealershipID, sourceURL)))
+}
+
+func isFreshScrapeCache(result model.ScrapeResult, now time.Time) bool {
+	if result.Status != model.RunStatusSuccess || len(result.Items) == 0 {
+		return false
+	}
+	completedAt := result.FinishedAt
+	if completedAt.IsZero() {
+		completedAt = result.StartedAt
+	}
+	if completedAt.IsZero() || now.Before(completedAt) {
+		return false
+	}
+	return now.Sub(completedAt) < scrapeOnceCacheTTL
 }
 
 func (s *Server) discoverSiteConfig(ctx context.Context, sourceURL, dealershipID string) (config.SiteConfig, error) {

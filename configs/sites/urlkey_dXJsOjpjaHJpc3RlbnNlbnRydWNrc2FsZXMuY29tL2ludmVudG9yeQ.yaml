@@ -1,0 +1,33 @@
+name: url::christensentrucksales.com/inventory
+baseUrl: https://christensentrucksales.com/inventory/
+listPage:
+    waitSelectors:
+        - .classStockV5CardWrapper
+    cardSelector: .classStockV5CardWrapper
+    titleSelector: h3
+    urlSelector: a[href*='/used-trucks/for']
+    stockSelector: ""
+    priceSelector: .classSv5CardPriceButton > span:first-child
+    mileageSelector: '[data-testid$=''-card-feature-odometer-value'']'
+    imageSelector: .classEmbCarouselItem1 img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 0
+        infiniteScroll: true
+        scrollMaxAttempts: 30
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - img.css-1d3w5wq[src*='cdn-media.tilabs.io']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock: []
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: iMotor/Gatsby Stock V5 inventory; vehicles load from the stock-search proxy after page render
+    discoveredAt: "2026-08-07T00:00:00Z"

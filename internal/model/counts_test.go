@@ -42,7 +42,7 @@ func TestInventoryCountUsesUniqueStockIDsWithoutVINs(t *testing.T) {
 	}
 }
 
-func TestScrapedInventoryCountUsesOnlyVINsWhenPresent(t *testing.T) {
+func TestScrapedInventoryCountUsesStockFallbackForItemsWithoutVIN(t *testing.T) {
 	items := []InventoryItem{
 		{StockID: "A1", VIN: "5FRYD4H95GB010521"},
 		{StockID: "A2", VIN: "5fryd4h95gb010521"},
@@ -51,8 +51,8 @@ func TestScrapedInventoryCountUsesOnlyVINsWhenPresent(t *testing.T) {
 	if got := InventoryCount(items); got != 2 {
 		t.Fatalf("expected identity count to include stock fallback, got %d", got)
 	}
-	if got := ScrapedInventoryCount(items); got != 1 {
-		t.Fatalf("expected scraped count to use unique VIN map, got %d", got)
+	if got := ScrapedInventoryCount(items); got != 2 {
+		t.Fatalf("expected scraped count to include stock fallback, got %d", got)
 	}
 }
 

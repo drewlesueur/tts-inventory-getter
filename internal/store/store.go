@@ -14,12 +14,14 @@ type ResultStore interface {
 	UpsertResult(ctx context.Context, result model.ScrapeResult) error
 	GetResult(ctx context.Context, resultID string) (model.ScrapeResult, error)
 	FindByIdempotency(ctx context.Context, key string) (model.ScrapeResult, error)
+	DeleteIdempotency(ctx context.Context, key string) error
 	ClearIdempotency(ctx context.Context) error
 	ClearResults(ctx context.Context) error
 
 	// Cached inventory pushed from an external (e.g. local) scraper for a source URL.
 	UpsertCachedInventory(ctx context.Context, c CachedInventory) error
 	GetCachedInventory(ctx context.Context, sourceURL string) (CachedInventory, error)
+	ClearCachedInventory(ctx context.Context) error
 	// GetCachedInventoryByHost returns the freshest cached inventory whose
 	// source URL is on the given host (see HostOf), regardless of exact path.
 	GetCachedInventoryByHost(ctx context.Context, host string) (CachedInventory, error)

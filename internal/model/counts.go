@@ -31,9 +31,6 @@ func InventoryCount(items []InventoryItem) int {
 }
 
 func ScrapedInventoryCount(items []InventoryItem) int {
-	if count := InventoryCountByUniqueVIN(items); count > 0 {
-		return count
-	}
 	return InventoryCount(items)
 }
 

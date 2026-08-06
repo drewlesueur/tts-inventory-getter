@@ -193,3 +193,13 @@ func TestPopulateDetailsFromHTML_ExtractsRichSpecsFromFactTiles(t *testing.T) {
 		t.Fatalf("expected city/highway mpl, got city=%q highway=%q", out.CityMPL, out.HighwayMPL)
 	}
 }
+
+func TestFindVINInTextSkipsCSSClassTokens(t *testing.T) {
+	text := `classHeaderNested VIN 3ALACWFCXKDKB9140`
+	if got := findVINInText(text); got != "3ALACWFCXKDKB9140" {
+		t.Fatalf("expected real VIN, got %q", got)
+	}
+	if got := findVINInText("classHeaderNested"); got != "" {
+		t.Fatalf("expected CSS token to be rejected, got %q", got)
+	}
+}

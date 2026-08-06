@@ -23,6 +23,8 @@ Production-oriented scraper service for dealership inventory extraction.
 
 ## API
 ### `POST /v1/scrape/once`
+Successful results are cached by dealership and normalized source URL for 24 hours. Requests during that window return the completed cached result without starting another live scrape. The client-provided `idempotencyKey` does not change the cache identity.
+
 Request:
 ```json
 {
@@ -49,7 +51,7 @@ Per-item response now includes additive aliases for UI mapping:
 Returns persisted scrape result (status, items, errors) from SQLite.
 
 ### `DELETE /v1/results`
-Clears every row in the `scrape_results` table. Requires `X-Service-Key`.
+Clears every row in the `scrape_results` table and all cached products, including the 24-hour scrape-once cache. Requires `X-Service-Key`. The next scrape-once request performs a live scrape.
 
 ### `POST /v1/scrape/daily-upsert`
 Manual trigger for the same full inventory upsert pipeline used by the daily cron. Requires `X-Service-Key`.

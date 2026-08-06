@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -171,6 +172,55 @@ func TestScrapeOnceEndpoint_IdempotencyDoesNotReuseAcrossDifferentSourceURL(t *t
 	}
 	if bytes.Contains(w.Body.Bytes(), []byte("existing-result")) {
 		t.Fatalf("expected not to reuse previous result for different sourceUrl: %s", w.Body.String())
+	}
+}
+
+func TestScrapeOnceEndpoint_ReturnsSuccessfulCacheFor24Hours(t *testing.T) {
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 1, ScrapeMaxAttempts: 1}
+	mem := store.NewMemoryResultStore()
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{}, config.Loader{}, mem, testMetrics(), nil, nil, nil)
+	router := server.Router()
+	cacheKey := scrapeOnceCacheKey("fresh-dealer", "https://dealer.test/inventory/")
+	if err := mem.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:       "cached-result",
+		DealershipID:   "fresh-dealer",
+		SourceURL:      "https://dealer.test/inventory/",
+		Status:         model.RunStatusSuccess,
+		StartedAt:      time.Now().UTC().Add(-time.Hour),
+		FinishedAt:     time.Now().UTC().Add(-time.Hour),
+		IdempotencyKey: cacheKey,
+		Items:          []model.InventoryItem{{StockID: "A1", Title: "Cached truck"}},
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	payload := map[string]any{
+		"dealershipId":   "fresh-dealer",
+		"sourceUrl":      "https://dealer.test/inventory/",
+		"idempotencyKey": "any-client-key",
+		"siteConfig": map[string]any{
+			"name":     "fresh-dealer",
+			"listPage": map[string]any{"cardSelector": ".vehicle-card"},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/v1/scrape/once", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Key", "k")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte("cached-result")) {
+		t.Fatalf("expected cached 200 response, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/v1/results", nil)
+	deleteReq.Header.Set("X-Service-Key", "k")
+	deleteResp := httptest.NewRecorder()
+	router.ServeHTTP(deleteResp, deleteReq)
+	if deleteResp.Code != http.StatusOK {
+		t.Fatalf("expected cache delete 200, got %d body=%s", deleteResp.Code, deleteResp.Body.String())
+	}
+	if _, err := mem.FindByIdempotency(context.Background(), cacheKey); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected scrape cache mapping to be deleted, got %v", err)
 	}
 }
 

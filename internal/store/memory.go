@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,13 @@ func (m *MemoryResultStore) GetCachedInventory(_ context.Context, sourceURL stri
 	return c, nil
 }
 
+func (m *MemoryResultStore) ClearCachedInventory(_ context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cache = map[string]CachedInventory{}
+	return nil
+}
+
 func (m *MemoryResultStore) GetCachedInventoryByHost(_ context.Context, host string) (CachedInventory, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -124,12 +132,28 @@ func (m *MemoryResultStore) FindByIdempotency(_ context.Context, key string) (mo
 	return m.byID[rid], nil
 }
 
+func (m *MemoryResultStore) DeleteIdempotency(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if resultID, ok := m.byIdem[key]; ok {
+		delete(m.byIdem, key)
+		result := m.byID[resultID]
+		result.IdempotencyKey = ""
+		m.byID[resultID] = result
+	}
+	return nil
+}
+
 func (m *MemoryResultStore) ClearIdempotency(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.byIdem = map[string]string{}
-	for id, r := range m.byID {
-		if r.IdempotencyKey != "" {
+	for key, id := range m.byIdem {
+		if strings.HasPrefix(key, "scrape-once-cache|") {
+			continue
+		}
+		delete(m.byIdem, key)
+		r := m.byID[id]
+		if r.IdempotencyKey == key {
 			r.IdempotencyKey = ""
 			m.byID[id] = r
 		}

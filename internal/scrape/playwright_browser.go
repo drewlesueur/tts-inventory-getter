@@ -23,6 +23,31 @@ const stealthScript = `
 const { chromium } = require("playwright-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 chromium.use(StealthPlugin());
+async function exhaustInfiniteScroll(page) {
+  const isIMotor = await page.evaluate(() => document.documentElement.hasAttribute("data-imotor-site"));
+  if (process.argv[2] !== "true" && !isIMotor) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise(r => setTimeout(r, 900));
+    return;
+  }
+  let previousHeight = 0;
+  let stablePasses = 0;
+  for (let pass = 0; pass < 5 && stablePasses < 2; pass++) {
+    const height = await page.evaluate(() => document.body.scrollHeight);
+    const step = Math.max(400, Math.floor((await page.evaluate(() => window.innerHeight)) * 0.75));
+    for (let y = 0; y <= height; y += step) {
+      await page.evaluate(scrollY => window.scrollTo(0, scrollY), y);
+      await new Promise(r => setTimeout(r, 150));
+    }
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise(r => setTimeout(r, 700));
+    const newHeight = await page.evaluate(() => document.body.scrollHeight);
+    stablePasses = newHeight === previousHeight ? stablePasses + 1 : 0;
+    previousHeight = newHeight;
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise(r => setTimeout(r, 300));
+}
 (async () => {
   const browser = await chromium.launch({
     headless: true,
@@ -39,8 +64,7 @@ chromium.use(StealthPlugin());
   });
   const page = await ctx.newPage();
   await page.goto(process.argv[1], { waitUntil: "networkidle" });
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await new Promise(r => setTimeout(r, 900));
+  await exhaustInfiniteScroll(page);
   process.stdout.write(await page.content());
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -49,6 +73,31 @@ chromium.use(StealthPlugin());
 // fallbackStealthScript is used when playwright-extra is unavailable.
 const fallbackStealthScript = `
 const { chromium } = require("playwright");
+async function exhaustInfiniteScroll(page) {
+  const isIMotor = await page.evaluate(() => document.documentElement.hasAttribute("data-imotor-site"));
+  if (process.argv[2] !== "true" && !isIMotor) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise(r => setTimeout(r, 900));
+    return;
+  }
+  let previousHeight = 0;
+  let stablePasses = 0;
+  for (let pass = 0; pass < 5 && stablePasses < 2; pass++) {
+    const height = await page.evaluate(() => document.body.scrollHeight);
+    const step = Math.max(400, Math.floor((await page.evaluate(() => window.innerHeight)) * 0.75));
+    for (let y = 0; y <= height; y += step) {
+      await page.evaluate(scrollY => window.scrollTo(0, scrollY), y);
+      await new Promise(r => setTimeout(r, 150));
+    }
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await new Promise(r => setTimeout(r, 700));
+    const newHeight = await page.evaluate(() => document.body.scrollHeight);
+    stablePasses = newHeight === previousHeight ? stablePasses + 1 : 0;
+    previousHeight = newHeight;
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise(r => setTimeout(r, 300));
+}
 (async () => {
   const browser = await chromium.launch({
     headless: true,
@@ -62,8 +111,7 @@ const { chromium } = require("playwright");
   const page = await ctx.newPage();
   await page.addInitScript(() => { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); });
   await page.goto(process.argv[1], { waitUntil: "networkidle" });
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await new Promise(r => setTimeout(r, 900));
+  await exhaustInfiniteScroll(page);
   process.stdout.write(await page.content());
   await browser.close();
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -81,22 +129,22 @@ func NewPlaywrightBrowser(command string) *PlaywrightBrowser {
 	return &PlaywrightBrowser{Command: command}
 }
 
-func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, _ config.SiteConfig) (string, error) {
+func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (string, error) {
 	if strings.TrimSpace(p.Command) == "" {
 		return "", fmt.Errorf("playwright command missing")
 	}
-	html, stderr, err := runPlaywrightCommand(ctx, p.Command, urlStr)
+	html, stderr, err := runPlaywrightCommand(ctx, p.Command, urlStr, site.ListPage.Pagination.InfiniteScroll)
 
 	// playwright-extra or stealth plugin not installed → fall back to plain playwright
 	if err != nil && isModuleNotFound(stderr, "playwright-extra", "puppeteer-extra-plugin-stealth") &&
 		strings.TrimSpace(p.Command) == defaultPlaywrightCommand {
-		html, stderr, err = runPlaywrightCommand(ctx, fallbackPlaywrightCommand, urlStr)
+		html, stderr, err = runPlaywrightCommand(ctx, fallbackPlaywrightCommand, urlStr, site.ListPage.Pagination.InfiniteScroll)
 	}
 
 	// plain playwright not installed locally → try npx
 	if err != nil && isModuleNotFound(stderr, "playwright") &&
 		strings.TrimSpace(p.Command) == defaultPlaywrightCommand {
-		html, stderr, err = runPlaywrightCommand(ctx, npxPlaywrightCommand, urlStr)
+		html, stderr, err = runPlaywrightCommand(ctx, npxPlaywrightCommand, urlStr, site.ListPage.Pagination.InfiniteScroll)
 	}
 
 	if err != nil {
@@ -108,8 +156,8 @@ func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, _ config.S
 	return html, nil
 }
 
-func runPlaywrightCommand(ctx context.Context, command, urlStr string) (string, string, error) {
-	script := command + " " + strconv.Quote(urlStr)
+func runPlaywrightCommand(ctx context.Context, command, urlStr string, infiniteScroll bool) (string, string, error) {
+	script := command + " " + strconv.Quote(urlStr) + " " + strconv.FormatBool(infiniteScroll)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
 	var out bytes.Buffer
 	var errOut bytes.Buffer

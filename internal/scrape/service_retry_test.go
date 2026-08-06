@@ -31,6 +31,26 @@ func (f staticFetcher) Fetch(_ context.Context, _ string) (string, error) {
 	return f.html, nil
 }
 
+type cookieAwareStaticFetcher struct{ html string }
+
+func (f cookieAwareStaticFetcher) Fetch(_ context.Context, _ string) (string, error) {
+	return f.html, nil
+}
+
+func (f cookieAwareStaticFetcher) FetchWithCookie(_ context.Context, _, _ string) (string, error) {
+	return f.html, nil
+}
+
+type staticBrowser struct {
+	html  string
+	calls int
+}
+
+func (b *staticBrowser) Render(_ context.Context, _ string, _ config.SiteConfig) (string, error) {
+	b.calls++
+	return b.html, nil
+}
+
 type duplicateURLExtractor struct{}
 
 func (duplicateURLExtractor) Extract(_ context.Context, _ string, _ string, _ config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
@@ -59,6 +79,30 @@ func TestScrapeOnce_BrowserFallbackAfterHTTPTimeout(t *testing.T) {
 		if e.Code == "SCRAPE_RENDER_FAILED" {
 			t.Fatalf("expected no SCRAPE_RENDER_FAILED, got %+v", e)
 		}
+	}
+}
+
+func TestScrapeOnce_BrowserFallbackForUnhydratedHTTPShell(t *testing.T) {
+	browser := &staticBrowser{html: `<div class="vehicle-card"><a href="/inventory/123/">Truck</a><h2>2022 Ford F-550</h2><span class="price">$45,000</span><img src="https://dealer.test/truck.webp"/></div>`}
+	s := Service{
+		Browser:     browser,
+		Fetcher:     cookieAwareStaticFetcher{html: `<html><body><div id="app"></div></body></html>`},
+		Extractors:  []Extractor{DOMExtractor{}},
+		Concurrency: 1,
+	}
+	site := config.SiteConfig{}
+	site.ListPage.CardSelector = ".vehicle-card"
+	site.ListPage.TitleSelector = "h2"
+	site.ListPage.URLSelector = "a"
+	site.ListPage.PriceSelector = ".price"
+	site.ListPage.ImageSelector = "img"
+
+	res := s.ScrapeOnce(context.Background(), "https://dealer.test/inventory/", site)
+	if browser.calls != 1 {
+		t.Fatalf("expected browser fallback, got %d calls", browser.calls)
+	}
+	if len(res.Items) != 1 || res.Items[0].Title != "2022 Ford F-550" {
+		t.Fatalf("expected hydrated browser item, got %#v", res.Items)
 	}
 }
 

@@ -314,17 +314,29 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				if isDataDomeChallenge(h) {
 					return "", fmt.Errorf("datadome challenge still present after all bypass strategies")
 				}
-				if s.Logger != nil {
-					s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_camoufox"), zap.Int("cardCount", countCards(h, site.ListPage.CardSelector)))
+				cardCount := countCards(h, site.ListPage.CardSelector)
+				// A successful HTTP response can still be only the server-rendered shell
+				// for client-side inventory apps. If a card selector is configured but
+				// absent, continue to a real browser so the inventory can hydrate.
+				if site.ListPage.CardSelector == "" || cardCount > 0 {
+					if s.Logger != nil {
+						s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_camoufox"), zap.Int("cardCount", cardCount))
+					}
+					return h, nil
 				}
-				return h, nil
+				renderErr = fmt.Errorf("HTTP response contained no configured inventory cards")
+				if s.Logger != nil {
+					s.Logger.Info("HTTP response is an unhydrated shell; falling back to browser", zap.String("url", pageURL), zap.String("cardSelector", site.ListPage.CardSelector))
+				}
 			}
-			// The Python fetch layer failed (missing binary, script error, or
-			// block). Don't give up: non-protected sites render fine in the Go
-			// browsers below, so a Python misconfig must not break them.
-			renderErr = fmt.Errorf("fetch failed: %w", err)
-			if s.Logger != nil {
-				s.Logger.Warn("python fetch layer failed; falling back to Go browsers", zap.String("url", pageURL), zap.Error(err))
+			if err != nil {
+				// The Python fetch layer failed (missing binary, script error, or
+				// block). Don't give up: non-protected sites render fine in the Go
+				// browsers below, so a Python misconfig must not break them.
+				renderErr = fmt.Errorf("fetch failed: %w", err)
+				if s.Logger != nil {
+					s.Logger.Warn("python fetch layer failed; falling back to Go browsers", zap.String("url", pageURL), zap.Error(err))
+				}
 			}
 		}
 	}
@@ -347,7 +359,9 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 			continue
 		}
 		html = h
+		renderErr = nil
 		source = "browser"
+		html = expandIMotorInventory(ctx, pageURL, html)
 		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
 			continue
 		}

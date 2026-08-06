@@ -170,7 +170,7 @@ func (s *SQLiteResultStore) GetResult(ctx context.Context, resultID string) (mod
 }
 
 func (s *SQLiteResultStore) ClearIdempotency(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE scrape_results SET idempotency_key = '' WHERE idempotency_key IS NOT NULL AND idempotency_key != ''`)
+	_, err := s.db.ExecContext(ctx, `UPDATE scrape_results SET idempotency_key = '' WHERE idempotency_key IS NOT NULL AND idempotency_key != '' AND idempotency_key NOT LIKE 'scrape-once-cache|%'`)
 	return err
 }
 
@@ -226,6 +226,11 @@ func (s *SQLiteResultStore) GetCachedInventory(ctx context.Context, sourceURL st
 		out.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	}
 	return out, nil
+}
+
+func (s *SQLiteResultStore) ClearCachedInventory(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM cached_inventory`)
+	return err
 }
 
 func (s *SQLiteResultStore) GetCachedInventoryByHost(ctx context.Context, host string) (CachedInventory, error) {
@@ -320,6 +325,11 @@ func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (
 	}
 	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
 	return s.scanOne(ctx, q, key)
+}
+
+func (s *SQLiteResultStore) DeleteIdempotency(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scrape_results SET idempotency_key = '' WHERE idempotency_key = ?`, key)
+	return err
 }
 
 func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) (model.ScrapeResult, error) {

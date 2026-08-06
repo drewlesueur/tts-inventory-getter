@@ -14,6 +14,7 @@ var multiSpace = regexp.MustCompile(`\s+`)
 var yearTitle = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
 var imageSizeHintRe = regexp.MustCompile(`-(\d+)x(\d+)\.(?:jpg|jpeg|png|webp)(?:[?#]|$)`)
 var stockTokenRe = regexp.MustCompile(`(?i)\bstock\s*#?[:\-]?\s*([a-z0-9\-]+)\b`)
+var listingIDPathRe = regexp.MustCompile(`/([0-9]+)/*$`)
 
 const minImageDimension = 300
 
@@ -49,6 +50,9 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 	item.RearWheel = clean(item.RearWheel)
 	item.VIN = strings.ToUpper(clean(item.VIN))
 	item.URL = absolutize(baseURL, item.URL)
+	if isMissingStockID(item.StockID) {
+		item.StockID = listingIDFromURL(item.URL)
+	}
 	item.PrimaryImage = absolutize(baseURL, item.PrimaryImage)
 	if !isLikelyVehicleImageURL(item.PrimaryImage) {
 		item.PrimaryImage = ""
@@ -207,4 +211,24 @@ func normalizeStockID(raw string) string {
 		return strings.ToUpper(clean(m[1]))
 	}
 	return strings.ToUpper(s)
+}
+
+func isMissingStockID(stockID string) bool {
+	switch strings.ToUpper(clean(stockID)) {
+	case "", "N/A", "NA", "NONE", "—", "-":
+		return true
+	default:
+		return false
+	}
+}
+
+func listingIDFromURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	if match := listingIDPathRe.FindStringSubmatch(u.Path); len(match) > 1 {
+		return match[1]
+	}
+	return ""
 }

@@ -26,7 +26,7 @@ func TestDetectChromeExecPathUsesConfiguredBrowser(t *testing.T) {
 
 func TestNewPlaywrightBrowserUsesLocalPlaywrightDependency(t *testing.T) {
 	command := NewPlaywrightBrowser("").Command
-	if !strings.Contains(command, "node -e") || !strings.Contains(command, `require("playwright")`) {
+	if !strings.Contains(command, "node -e") || (!strings.Contains(command, `require("playwright")`) && !strings.Contains(command, `require("playwright-extra")`)) {
 		t.Fatalf("unexpected default Playwright command: %s", command)
 	}
 }

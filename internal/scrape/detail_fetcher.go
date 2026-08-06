@@ -146,8 +146,10 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 				continue
 			}
 			if m := re.FindStringSubmatch(html); len(m) > 1 {
-				item.VIN = m[1]
-				break
+				if vin := validVINCandidate(m[1]); vin != "" {
+					item.VIN = vin
+					break
+				}
 			}
 		}
 	}
@@ -211,10 +213,32 @@ func detailImageURL(s *goquery.Selection) string {
 
 func findVINInText(text string) string {
 	re := regexp.MustCompile(`\b([A-HJ-NPR-Z0-9]{17})\b`)
-	if m := re.FindStringSubmatch(strings.ToUpper(text)); len(m) > 1 {
-		return m[1]
+	for _, m := range re.FindAllStringSubmatch(strings.ToUpper(text), -1) {
+		if len(m) > 1 {
+			if vin := validVINCandidate(m[1]); vin != "" {
+				return vin
+			}
+		}
 	}
 	return ""
+}
+
+func validVINCandidate(raw string) string {
+	vin := strings.ToUpper(strings.TrimSpace(raw))
+	if len(vin) != 17 || strings.ContainsAny(vin, "IOQ") {
+		return ""
+	}
+	hasDigit := false
+	for _, r := range vin {
+		if r >= '0' && r <= '9' {
+			hasDigit = true
+			break
+		}
+	}
+	if !hasDigit {
+		return ""
+	}
+	return vin
 }
 
 func findStockIDInText(text string) string {
