@@ -39,40 +39,49 @@ func expandIMotorInventory(ctx context.Context, pageURL, renderedHTML string) st
 	if !strings.Contains(renderedHTML, `data-imotor-site`) {
 		return renderedHTML
 	}
+	expanded, err := fetchIMotorInventoryHTML(ctx, pageURL)
+	if err != nil {
+		return renderedHTML
+	}
+	return expanded
+}
+
+func fetchIMotorInventoryHTML(ctx context.Context, pageURL string) (string, error) {
 	u, err := url.Parse(pageURL)
 	if err != nil || u.Host == "" {
-		return renderedHTML
+		return "", fmt.Errorf("invalid iMotor inventory URL")
 	}
 	pageDataURL := u.Scheme + "://" + u.Host + "/page-data" + strings.TrimSuffix(u.Path, "/") + "/page-data.json"
 	client := &http.Client{Timeout: 20 * time.Second}
 	pageData, err := getIMotorBytes(ctx, client, pageDataURL)
 	if err != nil {
-		return renderedHTML
+		return "", err
 	}
 	match := imotorDealerIDRe.FindSubmatch(pageData)
 	if len(match) < 2 {
-		return renderedHTML
+		return "", fmt.Errorf("iMotor dealer ID not found")
 	}
 	payload := fmt.Sprintf(`{"queries":[{"indexUid":"dealer_stock_%s","q":"","filter":["NOT (adType = \"for_rent\" OR adType = 3)"],"limit":500,"offset":0,"sort":["createdAt:asc"]}]}`, match[1])
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.Scheme+"://"+u.Host+"/stock-search-proxy/multi-search", bytes.NewBufferString(payload))
 	if err != nil {
-		return renderedHTML
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return renderedHTML
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return renderedHTML
+		return "", fmt.Errorf("iMotor search status %d", resp.StatusCode)
 	}
 	var search imotorSearchResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 20<<20)).Decode(&search); err != nil || len(search.Results) == 0 || len(search.Results[0].Hits) == 0 {
-		return renderedHTML
+		return "", fmt.Errorf("iMotor search returned no inventory: %w", err)
 	}
 	var cards strings.Builder
 	cards.WriteString(`<section data-imotor-api-inventory="true">`)
+	vehicleMaps := make([]map[string]any, 0, len(search.Results[0].Hits))
 	for _, hit := range search.Results[0].Hits {
 		if hit.ID <= 0 {
 			continue
@@ -83,6 +92,11 @@ func expandIMotorInventory(ctx context.Context, pageURL, renderedHTML string) st
 			vehicleType = "used"
 		}
 		detailURL := fmt.Sprintf("/%s-trucks/for sale/%s/%s/%d/%d/", slugIMotor(vehicleType), slugIMotor(hit.Make), slugIMotor(hit.Model), hit.Year, hit.ID)
+		vehicleMaps = append(vehicleMaps, map[string]any{
+			"stockid": strconv.Itoa(hit.ID), "url": detailURL, "title": title,
+			"year": hit.Year, "make": hit.Make, "model": hit.Model, "price": hit.Price,
+			"mileage": hit.Odometer, "vin": validVINCandidate(hit.VIN), "images": hit.Images,
+		})
 		cards.WriteString(`<div class="classStockV5CardWrapper">`)
 		cards.WriteString(`<a href="` + html.EscapeString(detailURL) + `"><h3>` + html.EscapeString(title) + `</h3></a>`)
 		cards.WriteString(`<meta itemprop="vehicleIdentificationNumber" content="` + html.EscapeString(validVINCandidate(hit.VIN)) + `">`)
@@ -94,7 +108,11 @@ func expandIMotorInventory(ctx context.Context, pageURL, renderedHTML string) st
 		cards.WriteString(`</div>`)
 	}
 	cards.WriteString(`</section>`)
-	return cards.String()
+	nextData, _ := json.Marshal(map[string]any{"props": map[string]any{"inventory": vehicleMaps}})
+	cards.WriteString(`<script id="__NEXT_DATA__" type="application/json">`)
+	cards.Write(nextData)
+	cards.WriteString(`</script>`)
+	return cards.String(), nil
 }
 
 func getIMotorBytes(ctx context.Context, client *http.Client, rawURL string) ([]byte, error) {

@@ -20,8 +20,7 @@ listPage:
         scrollMaxAttempts: 30
         clickMaxAttempts: 0
 detailPage:
-    imageSelectors:
-        - img.css-1d3w5wq[src*='cdn-media.tilabs.io']
+    imageSelectors: []
     vinSelector: ""
     stockSelector: ""
 regex:

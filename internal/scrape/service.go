@@ -304,6 +304,16 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	var html string
 	var renderErr error
 	source := "none"
+	if strings.Contains(strings.ToLower(site.Discovery.Notes), "imotor") {
+		if h, err := fetchIMotorInventoryHTML(ctx, pageURL); err == nil {
+			if s.Logger != nil {
+				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "go_imotor_api"), zap.Int("cardCount", countCards(h, site.ListPage.CardSelector)))
+			}
+			return h, nil
+		} else if s.Logger != nil {
+			s.Logger.Warn("Go iMotor API fetch failed; falling back", zap.String("url", pageURL), zap.Error(err))
+		}
+	}
 
 	if s.Fetcher != nil {
 		if cf, ok := s.Fetcher.(interface {

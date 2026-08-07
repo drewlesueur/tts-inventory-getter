@@ -23,9 +23,7 @@ type CurlFetcher struct {
 }
 
 func NewCurlFetcher(scriptPath, pythonBin string, store *CookieStore) *CurlFetcher {
-	if pythonBin == "" {
-		pythonBin = "python3"
-	}
+	pythonBin = resolvePythonBin(pythonBin)
 	return &CurlFetcher{ScriptPath: scriptPath, PythonBin: pythonBin, CookieStore: store}
 }
 

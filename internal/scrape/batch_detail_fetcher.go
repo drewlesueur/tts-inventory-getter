@@ -26,9 +26,7 @@ type BatchDetailFetcher struct {
 }
 
 func NewBatchDetailFetcher(scriptPath, pythonBin string, sizes *ImageSizeCache, store *CookieStore) *BatchDetailFetcher {
-	if pythonBin == "" {
-		pythonBin = "python3"
-	}
+	pythonBin = resolvePythonBin(pythonBin)
 	return &BatchDetailFetcher{ScriptPath: scriptPath, PythonBin: pythonBin, ImageSizes: sizes, CookieStore: store}
 }
 
