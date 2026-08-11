@@ -184,13 +184,13 @@ type scrapedPage struct {
 	items []model.InventoryItem
 }
 
-func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string) []scrapedPage {
-	listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer listCancel()
-	pages, err := invClient.ListPages(listCtx)
-	if err != nil {
-		logger.Error("inventory api list failed", zap.String("job", jobName), zap.Error(err))
-		return nil
+func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string, pages []inventoryapi.PageEntry) []scrapedPage {
+	if pages == nil {
+		var err error
+		pages, err = listInventoryPages(logger, invClient, jobName)
+		if err != nil {
+			return nil
+		}
 	}
 	eligible := make([]inventoryapi.PageEntry, 0, len(pages))
 	for _, p := range pages {
@@ -324,8 +324,40 @@ func pageMatchesSchedule(page inventoryapi.PageEntry, scheduleType string) bool 
 	return configured == requested
 }
 
+func listInventoryPages(logger *zap.Logger, invClient *inventoryapi.Client, jobName string) ([]inventoryapi.PageEntry, error) {
+	listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	pages, err := invClient.ListPages(listCtx)
+	listCancel()
+	if err != nil {
+		logger.Error("inventory api list failed", zap.String("job", jobName), zap.Error(err))
+		return nil, err
+	}
+	return pages, nil
+}
+
+func runSpreadsheetSyncPages(logger *zap.Logger, invClient *inventoryapi.Client, pages []inventoryapi.PageEntry) {
+	for _, page := range pages {
+		if !page.SpreadsheetSyncEnabled() {
+			continue
+		}
+		syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err := invClient.SyncAccountInventorySources(syncCtx, page.AccountID)
+		syncCancel()
+		if err != nil {
+			logger.Error("spreadsheet sync failed", zap.String("schedule", "daily"), zap.String("accountID", page.AccountID), zap.Error(err))
+			continue
+		}
+		logger.Info("spreadsheet synced", zap.String("schedule", "daily"), zap.String("accountID", page.AccountID))
+	}
+}
+
 func runDailyUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
-	runScheduledUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "daily-upsert", "daily")
+	pages, err := listInventoryPages(logger, invClient, "daily-upsert")
+	if err != nil {
+		return
+	}
+	runSpreadsheetSyncPages(logger, invClient, pages)
+	runScheduledUpsertWithPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, "daily-upsert", "daily", pages)
 }
 
 func runWeeklyUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client) {
@@ -333,7 +365,11 @@ func runWeeklyUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Servi
 }
 
 func runScheduledUpsert(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string) {
-	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, jobName, scheduleType) {
+	runScheduledUpsertWithPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, jobName, scheduleType, nil)
+}
+
+func runScheduledUpsertWithPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string, pages []inventoryapi.PageEntry) {
+	for _, sp := range scrapeAllPages(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient, jobName, scheduleType, pages) {
 		items := make([]model.InventoryItem, 0, len(sp.items))
 		for _, it := range sp.items {
 			if it.StockID == "" {

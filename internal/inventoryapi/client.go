@@ -20,15 +20,21 @@ type Client struct {
 }
 
 type PageEntry struct {
-	AccountID              string `json:"accountID"`
-	DealershipID           string `json:"dealershipId"`
-	URL                    string `json:"url"`
-	FTPSync                *bool  `json:"ftp_sync"`
-	ScrapeSync             *bool  `json:"scrape_sync"`
-	ScrapeFrequencyMinutes int    `json:"scrapeFrequencyMinutes"`
-	Schedule               struct {
+	AccountID                     string `json:"accountID"`
+	DealershipID                  string `json:"dealershipId"`
+	URL                           string `json:"url"`
+	FTPSync                       *bool  `json:"ftp_sync"`
+	ScrapeSync                    *bool  `json:"scrape_sync"`
+	ScrapeFrequencyMinutes        int    `json:"scrapeFrequencyMinutes"`
+	SpreadsheetURL                string `json:"spreadsheetUrl"`
+	SpreadsheetSync               *bool  `json:"spreadsheet_sync"`
+	InventorySyncFrequencyMinutes int    `json:"inventorySyncFrequencyMinutes"`
+	Schedule                      struct {
 		Type string `json:"type"`
 	} `json:"schedule"`
+	SpreadsheetSchedule struct {
+		Type string `json:"type"`
+	} `json:"spreadsheetSchedule"`
 }
 
 func (p PageEntry) FTPSyncEnabled() bool {
@@ -37,6 +43,10 @@ func (p PageEntry) FTPSyncEnabled() bool {
 
 func (p PageEntry) ScrapeSyncEnabled() bool {
 	return p.ScrapeSync == nil || *p.ScrapeSync
+}
+
+func (p PageEntry) SpreadsheetSyncEnabled() bool {
+	return p.SpreadsheetSync != nil && *p.SpreadsheetSync && strings.TrimSpace(p.SpreadsheetURL) != ""
 }
 
 type listResponse struct {
@@ -79,10 +89,11 @@ func (c *Client) baseURL() string {
 }
 
 func (c *Client) ListPages(ctx context.Context) ([]PageEntry, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/getScrapePageURLList", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL()+"/api/inventory/sources", nil)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("X-Service-Key", c.ServiceKey)
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, err
@@ -118,7 +129,7 @@ func (c *Client) SyncAccountInventorySources(ctx context.Context, accountID stri
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/syncAccountInventorySources", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/api/inventory/sync", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

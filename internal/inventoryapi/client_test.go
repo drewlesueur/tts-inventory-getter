@@ -16,7 +16,7 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 		"status": 200,
 		"message": "success",
 		"data": {
-			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","ftp_sync":true,"scrape_sync":true,"scrapeFrequencyMinutes":10080,"schedule":{"type":"weekly"}}],
+			"items": [{"accountID":"account-1","dealershipId":"dealer-1","url":"https://dealer.test/inventory","ftp_sync":true,"scrape_sync":true,"scrapeFrequencyMinutes":10080,"schedule":{"type":"weekly"},"spreadsheetUrl":"https://docs.google.com/sheet.csv","spreadsheet_sync":true,"inventorySyncFrequencyMinutes":1440,"spreadsheetSchedule":{"type":"daily"}}],
 			"count": 1,
 			"generatedAt": "2026-05-26T12:00:00Z"
 		}
@@ -37,6 +37,9 @@ func TestListPagesSupportsDataItemsEnvelope(t *testing.T) {
 	}
 	if !pages[0].FTPSyncEnabled() || !pages[0].ScrapeSyncEnabled() {
 		t.Fatalf("unexpected sync flags: ftp=%v scrape=%v", pages[0].FTPSync, pages[0].ScrapeSync)
+	}
+	if !pages[0].SpreadsheetSyncEnabled() || pages[0].SpreadsheetSchedule.Type != "daily" {
+		t.Fatalf("unexpected spreadsheet settings: %#v", pages[0])
 	}
 }
 
@@ -110,7 +113,7 @@ func TestSyncAccountInventorySourcesSendsServiceKeyAndAccountID(t *testing.T) {
 		ServiceKey: "service-key",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			gotHeader = r.Header.Get("X-Service-Key")
-			if r.URL.Path != "/syncAccountInventorySources" {
+			if r.URL.Path != "/api/inventory/sync" {
 				t.Errorf("unexpected request path: %s", r.URL.Path)
 			}
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -138,10 +141,14 @@ func TestSyncAccountInventorySourcesSendsServiceKeyAndAccountID(t *testing.T) {
 func listPagesClient(t *testing.T, payload string) *Client {
 	t.Helper()
 	return &Client{
-		BaseURL: "http://inventory.test",
+		BaseURL:    "http://inventory.test",
+		ServiceKey: "service-key",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Path != "/getScrapePageURLList" {
+			if r.URL.Path != "/api/inventory/sources" {
 				t.Errorf("unexpected request path: %s", r.URL.Path)
+			}
+			if r.Header.Get("X-Service-Key") != "service-key" {
+				t.Errorf("unexpected X-Service-Key: %q", r.Header.Get("X-Service-Key"))
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK,

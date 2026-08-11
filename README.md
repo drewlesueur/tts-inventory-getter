@@ -112,17 +112,19 @@ All API errors return:
 - Per-IP rate limiting
 
 ## Scheduled Scrape Flow
-Three independent crons, each toggled by its own `ENABLE_*` flag:
+Scheduled jobs are toggled by their `ENABLE_*` flags:
 
 **1. Daily inventory upsert** (`ENABLE_DAILY_UPSERT_CRON`, `DAILY_UPSERT_CRON_SPEC`, default `@daily`)
-1. `GET <INVENTORY_API_BASE_URL>/getScrapePageURLList` -> expects `{ "data": { "items": [{accountID, dealershipId, url, ftp_sync, scrape_sync}, ...] } }` (legacy `data` arrays are also accepted).
-2. Processes daily entries using `scrapeFrequencyMinutes` when provided, falling back to `schedule.type` (entries without either are treated as daily for compatibility).
-3. If an eligible entry has `ftp_sync: true`, calls `POST <INVENTORY_API_BASE_URL>/syncAccountInventorySources` with `{ "accountID": "..." }`.
-4. If an eligible entry has `scrape_sync: true`, loads its URL-keyed site config (or pulls from in-memory cache populated by prior discovery). Missing configs are skipped with a warning.
-5. Runs `ScrapeOnce` against `url`.
-6. For scraped items with a `stockId`, `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory` with full item fields, including detail-page images.
+1. `GET <INVENTORY_API_BASE_URL>/api/inventory/sources` with `X-Service-Key` -> expects `{ "data": { "items": [{accountID, dealershipId, url, ftp_sync, scrape_sync, spreadsheetUrl, spreadsheet_sync, inventorySyncFrequencyMinutes}, ...] } }` (legacy `data` arrays are also accepted).
+2. Reuses that one response for all daily work; it does not fetch the account list again.
+3. If `spreadsheet_sync: true` and its schedule is daily, calls `POST <INVENTORY_API_BASE_URL>/api/inventory/sync`.
+4. If an eligible entry has `ftp_sync: true`, calls the same protected inventory sync API.
+5. If an eligible entry has `scrape_sync: true`, loads its URL-keyed site config and runs `ScrapeOnce`.
+6. For scraped items with a `stockId`, calls `POST <INVENTORY_API_BASE_URL>/upsertAccountInventory`.
 
 If `scrape_sync` is omitted by an older upstream API response, the scheduler keeps the previous behavior and scrapes the entry. `ftp_sync` must be explicitly true to run FTP/source sync.
+
+Spreadsheet pulls are daily only and are handled by `DAILY_UPSERT_CRON_SPEC` together with FTP/source and scrape work.
 
 Example upsert request:
 ```bash
