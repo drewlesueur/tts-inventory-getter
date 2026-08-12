@@ -64,6 +64,36 @@ func TestJJSAdobeScrapeOnceEndpointsAlwaysUseSyncedCache(t *testing.T) {
 	}
 }
 
+func TestJJSAdobeScrapeOnceUsesFreshResultCacheBeforeSyncedCache(t *testing.T) {
+	const sourceURL = "https://www.jjsadobeauto.com/cars-for-sale"
+	const dealerID = "jjs-adobe"
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}
+	st := store.NewMemoryResultStore()
+	if err := st.UpsertResult(context.Background(), model.ScrapeResult{
+		ResultID:       "existing-jjs-result",
+		DealershipID:   dealerID,
+		SourceURL:      sourceURL,
+		Status:         model.RunStatusSuccess,
+		StartedAt:      time.Now().UTC().Add(-time.Hour),
+		FinishedAt:     time.Now().UTC().Add(-time.Hour),
+		IdempotencyKey: scrapeOnceCacheKey(dealerID, sourceURL),
+		Items:          []model.InventoryItem{{Title: "Cached JJS truck", StockID: "J1"}},
+	}); err != nil {
+		t.Fatalf("seed result cache: %v", err)
+	}
+
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{Fetcher: blockedFetcher{}}, config.NewLoader(t.TempDir()), st, testMetrics(), nil, nil, nil)
+	body, _ := json.Marshal(map[string]any{"dealershipId": dealerID, "sourceUrl": sourceURL})
+	req := httptest.NewRequest(http.MethodPost, "/v1/scrape/once", bytes.NewReader(body))
+	req.Header.Set("X-Service-Key", "k")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte("existing-jjs-result")) {
+		t.Fatalf("expected existing 24-hour result cache, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 	const sourceURL = "https://www.blocked-dealer.test/cars-for-sale"
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}

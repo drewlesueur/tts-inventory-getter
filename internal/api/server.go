@@ -181,11 +181,11 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
-		return
-	}
 	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
 		writeJSON(w, http.StatusOK, resultResponse(existing))
+		return
+	}
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
@@ -232,11 +232,11 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
-		return
-	}
 	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
 		writeJSON(w, http.StatusOK, resultResponse(existing))
+		return
+	}
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
