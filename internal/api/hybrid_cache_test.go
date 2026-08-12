@@ -26,6 +26,44 @@ func (blockedFetcher) Fetch(_ context.Context, _ string) (string, error) {
 	return "", errors.New("[curl_cffi] blocked/error status=403 — datadome challenge still present after all bypass strategies")
 }
 
+func TestJJSAdobeScrapeOnceEndpointsAlwaysUseSyncedCache(t *testing.T) {
+	const sourceURL = "https://www.jjsadobeauto.com/cars-for-sale"
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}
+	st := store.NewMemoryResultStore()
+	if err := st.UpsertCachedInventory(context.Background(), store.CachedInventory{
+		SourceURL: sourceURL,
+		Items: []model.InventoryItem{
+			{Title: "2021 Chevrolet Silverado 1500", StockID: "127974184"},
+			{Title: "2023 Chevrolet Malibu RS", StockID: "127698256"},
+		},
+		// A stale synced cache must still be served; only local sync refreshes it.
+		UpdatedAt: time.Now().UTC().Add(-48 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	server := NewServer(cfg, zap.NewNop(), scrape.Service{Fetcher: blockedFetcher{}}, config.NewLoader(t.TempDir()), st, testMetrics(), nil, nil, nil)
+	router := server.Router()
+	for _, path := range []string{"/v1/scrape/once", "/v1/scrape/once-and-result"} {
+		body, _ := json.Marshal(map[string]any{
+			"dealershipId": "jjs-adobe",
+			"sourceUrl":    "https://jjsadobeauto.com/cars-for-sale/",
+		})
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header.Set("X-Service-Key", "k")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: expected cached 200, got %d body=%s", path, w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte(`"progressStage":"completed_from_cache"`)) ||
+			!bytes.Contains(w.Body.Bytes(), []byte(`"totalItems":2`)) {
+			t.Fatalf("%s: expected two cached items, body=%s", path, w.Body.String())
+		}
+	}
+}
+
 func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 	const sourceURL = "https://www.blocked-dealer.test/cars-for-sale"
 	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}

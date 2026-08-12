@@ -181,6 +181,9 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+		return
+	}
 	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
 		writeJSON(w, http.StatusOK, resultResponse(existing))
 		return
@@ -229,6 +232,9 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+		return
+	}
 	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
 		writeJSON(w, http.StatusOK, resultResponse(existing))
 		return
@@ -540,12 +546,45 @@ func (s *Server) resolveDealerByURL(ctx context.Context, sourceURL string) (deal
 // isCacheOnly reports whether a URL must be served from cache (never live-scraped).
 func (s *Server) isCacheOnly(rawURL string) bool {
 	want := store.NormalizeURLKey(rawURL)
+	// These DataDome-protected dealers are intentionally scraped by the local
+	// residential-IP worker. The server must never attempt a live pull for them.
+	for _, host := range []string{"jjsadobeauto.com", "saiautosale.com"} {
+		if hostnameOf(rawURL) == host {
+			return true
+		}
+	}
 	for _, u := range s.cfg.CacheOnlyURLs {
 		if store.NormalizeURLKey(u) == want {
 			return true
 		}
 	}
 	return false
+}
+
+// serveCacheOnlyScrapeOnce makes the scrape-once APIs honor the same synced
+// inventory cache as /v1/scrape/run. Cache-only URLs never fall through to a
+// live server scrape, even when the cached inventory is older than 24 hours;
+// the local-sync worker is responsible for refreshing it.
+func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request, dealershipID, sourceURL, cacheKey string) bool {
+	if !s.isCacheOnly(sourceURL) {
+		return false
+	}
+	cached, err := s.cachedInventoryFor(r.Context(), sourceURL)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is local-sync only but no synced inventory exists yet"))
+		return true
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
+		return true
+	}
+	result := resultFromCache(uuid.NewString(), dealershipID, sourceURL, cacheKey, cached)
+	if err := s.store.UpsertResult(r.Context(), result); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		return true
+	}
+	writeJSON(w, http.StatusOK, resultResponse(result))
+	return true
 }
 
 // shouldServeFromCache is the hybrid-mode gate: a URL is cache-first when it is
