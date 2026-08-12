@@ -469,6 +469,9 @@ func (s Service) collectPaginatedHTML(ctx context.Context, sourceURL, firstHTML 
 				if ferr != nil {
 					return ferr
 				}
+				if site.ListPage.CardSelector != "" && countCards(pageHTML, site.ListPage.CardSelector) == 0 {
+					return fmt.Errorf("pagination page returned zero inventory cards")
+				}
 				// The DealerCenter platform sometimes ignores ?PageNumber=N and
 				// re-serves page 1; treat a page-number mismatch as a failed
 				// fetch so it retries instead of silently duplicating page 1.
