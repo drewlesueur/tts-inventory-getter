@@ -404,11 +404,14 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	if renderErr != nil {
 		return "", renderErr
 	}
-	if s.Logger != nil {
-		cardCount := 0
-		if site.ListPage.CardSelector != "" {
-			cardCount = countCards(html, site.ListPage.CardSelector)
+	cardCount := 0
+	if site.ListPage.CardSelector != "" {
+		cardCount = countCards(html, site.ListPage.CardSelector)
+		if cardCount == 0 && strings.Contains(strings.ToLower(site.Discovery.Notes), "datadome") {
+			return "", fmt.Errorf("protected inventory page returned zero cards; DataDome bypass is unavailable or was challenged")
 		}
+	}
+	if s.Logger != nil {
 		s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", source), zap.Int("cardCount", cardCount))
 	}
 	return html, nil

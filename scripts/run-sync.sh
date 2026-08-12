@@ -7,13 +7,13 @@
 #   ./scripts/run-sync.sh                          # uses DEFAULT_URL below
 #   ./scripts/run-sync.sh <url>
 #   ./scripts/run-sync.sh <url> <dealershipId> <accountId>
+#   ./scripts/run-sync.sh https://www.jjsadobeauto.com/cars-for-sale
 #
 set -euo pipefail
 
 # ── Config (edit these) ───────────────────────────────────────────────────────
 CLOUD_URL="${CLOUD_URL:-http://54.244.74.98:8080}"
 SERVICE_KEY="${SERVICE_KEY:-replace-with-strong-key}"
-PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-300}"
 DEFAULT_URL="https://www.saiautosale.com/cars-for-sale"
 # Leave dealer/account empty so the cloud resolves the REAL account/dealer that
@@ -25,6 +25,7 @@ LOCAL_PORT="8080"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
 
 URL="${1:-$DEFAULT_URL}"
 DEALER="${2:-$DEFAULT_DEALER}"
@@ -45,7 +46,7 @@ if curl -s -m 3 "${LOCAL_URL}/healthz" >/dev/null 2>&1; then
   echo "[run-sync] local scraper already running on :${LOCAL_PORT}"
 else
   echo "[run-sync] starting local scraper..."
-  go run ./cmd/server > /tmp/run-sync-scraper.log 2>&1 &
+  ./startme.sh > /tmp/run-sync-scraper.log 2>&1 &
   started_server=$!
   for i in $(seq 1 20); do
     sleep 1
@@ -59,6 +60,11 @@ else
       exit 1
     fi
   done
+fi
+
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "[run-sync] ERROR: local Python environment is unavailable (run ./startme.sh once)"
+  exit 1
 fi
 
 # 2. Scrape locally + push to the cloud.

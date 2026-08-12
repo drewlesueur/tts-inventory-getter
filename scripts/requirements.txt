@@ -3,5 +3,6 @@
 # apify_fingerprint_datapoints got installed — keep these exact.
 curl_cffi==0.15.0
 camoufox==0.4.11
+playwright==1.60.0
 browserforge==1.2.4
 apify_fingerprint_datapoints==0.13.0
