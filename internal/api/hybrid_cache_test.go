@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -266,6 +267,66 @@ func TestHybridCacheServesURLVariantsOnSameHost(t *testing.T) {
 		}
 		if int(resp["itemCount"].(float64)) != 2 {
 			t.Fatalf("%s: expected 2 cached items got %v", variant, resp["itemCount"])
+		}
+	}
+}
+
+// A cache-only URL whose idempotency key is still held by an older, non-fresh
+// result row must not blow up: idempotency_key is uniquely indexed while
+// UpsertResult conflict-resolves on result_id, so serving from cache with a new
+// result id used to fail with "UNIQUE constraint failed" (HTTP 500). TapToSign
+// surfaced that as a 502 on /scrapeInventoryPage.
+func TestScrapeOnceFromCacheReplacesStaleIdempotencyRow(t *testing.T) {
+	const sourceURL = "https://www.jjsadobeauto.com/cars-for-sale"
+	const dealerID = "test_dea_test_11223"
+	ctx := context.Background()
+
+	st, err := store.NewSQLiteResultStore(filepath.Join(t.TempDir(), "results.db"))
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+
+	// An earlier live scrape failed and left the cache key on its row.
+	if err := st.UpsertResult(ctx, model.ScrapeResult{
+		ResultID:       "stale-failed-result",
+		DealershipID:   dealerID,
+		SourceURL:      sourceURL,
+		Status:         model.RunStatusPartial,
+		StartedAt:      time.Now().UTC().Add(-2 * time.Hour),
+		FinishedAt:     time.Now().UTC().Add(-2 * time.Hour),
+		IdempotencyKey: scrapeOnceCacheKey(dealerID, sourceURL),
+		ProgressStage:  "completed_with_errors",
+	}); err != nil {
+		t.Fatalf("seed stale result: %v", err)
+	}
+	if err := st.UpsertCachedInventory(ctx, store.CachedInventory{
+		SourceURL: sourceURL,
+		Items: []model.InventoryItem{
+			{Title: "2017 Buick Encore Preferred", StockID: "124310070"},
+			{Title: "2021 Chevrolet Silverado 1500", StockID: "127974184"},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	cfg := config.Config{ServiceKey: "k", RequestBodyLimitMB: 2, RateLimitRPS: 20, RateLimitBurst: 20, DefaultRunTimeoutSec: 30}
+	router := NewServer(cfg, zap.NewNop(), scrape.Service{Fetcher: blockedFetcher{}}, config.NewLoader(t.TempDir()), st, testMetrics(), nil, nil, nil).Router()
+
+	// Repeat the call: every request mints a new result id against the same key.
+	for attempt := 1; attempt <= 2; attempt++ {
+		body, _ := json.Marshal(map[string]any{"dealershipId": dealerID, "sourceUrl": sourceURL})
+		req := httptest.NewRequest(http.MethodPost, "/v1/scrape/once", bytes.NewReader(body))
+		req.Header.Set("X-Service-Key", "k")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("attempt %d: expected 200, got %d body=%s", attempt, w.Code, w.Body.String())
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte(`"progressStage":"completed_from_cache"`)) ||
+			!bytes.Contains(w.Body.Bytes(), []byte(`"totalItems":2`)) {
+			t.Fatalf("attempt %d: expected 2 cached items, body=%s", attempt, w.Body.String())
 		}
 	}
 }

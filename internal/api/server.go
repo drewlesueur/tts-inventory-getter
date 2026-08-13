@@ -578,6 +578,13 @@ func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
 		return true
 	}
+	// The new result reuses cacheKey, and idempotency_key is uniquely indexed, so
+	// release the key from whatever stale row still holds it — otherwise the
+	// upsert (which conflict-resolves on result_id) trips the unique constraint.
+	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		return true
+	}
 	result := resultFromCache(uuid.NewString(), dealershipID, sourceURL, cacheKey, cached)
 	if err := s.store.UpsertResult(r.Context(), result); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
