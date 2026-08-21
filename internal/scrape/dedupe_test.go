@@ -91,3 +91,78 @@ func TestDedupe_ReplacesPriceOnlyTitleWithVehicleTitle(t *testing.T) {
 		t.Fatalf("expected vehicle title to replace price title, got %q", out[0].Title)
 	}
 }
+
+// Title splitting yields only the first model token, so a structured source that
+// knows the full name must win the merge.
+func TestDedupe_PrefersFullMultiWordModelName(t *testing.T) {
+	fromTitle := model.InventoryItem{StockID: "P558569", Title: "2026 Tesla Model S Plaid", Make: "Tesla", Model: "Model"}
+	fromAPI := model.InventoryItem{StockID: "P558569", Make: "Tesla", Model: "Model S", VIN: "5YJSA1E67TF558569"}
+	out := Dedupe([]model.InventoryItem{fromTitle, fromAPI})
+	if len(out) != 1 {
+		t.Fatalf("expected 1 merged item got %d", len(out))
+	}
+	if out[0].Model != "Model S" {
+		t.Fatalf("model = %q, want \"Model S\"", out[0].Model)
+	}
+}
+
+// A different model that merely shares a prefix must not be overwritten.
+func TestDedupe_KeepsUnrelatedModelWithSharedPrefix(t *testing.T) {
+	a := model.InventoryItem{StockID: "X1", Model: "Civic"}
+	b := model.InventoryItem{StockID: "X1", Model: "Civics"}
+	out := Dedupe([]model.InventoryItem{a, b})
+	if out[0].Model != "Civic" {
+		t.Fatalf("model = %q, want \"Civic\"", out[0].Model)
+	}
+}
+
+// Images served by an endpoint keep their identity in the query, which
+// canonicalURLKey strips — so an image key must not merge distinct vehicles.
+func TestDedupe_DoesNotMergeOnQueryOnlyImageEndpoint(t *testing.T) {
+	base := "https://service.test/images/GetEvoxImage?vin="
+	items := []model.InventoryItem{
+		{Title: "2026 Ford Maverick XL", Price: "$29,483", PrimaryImage: base + "AAA"},
+		{Title: "2026 Ford Bronco Sport", Price: "$30,073", PrimaryImage: base + "BBB"},
+		{Title: "2026 Ford Escape Active", Price: "$31,100", PrimaryImage: base + "CCC"},
+	}
+	if out := Dedupe(items); len(out) != 3 {
+		t.Fatalf("expected 3 items got %d", len(out))
+	}
+}
+
+// A real image file path is still a usable identity.
+func TestDedupe_StillMergesOnIdenticalImageFile(t *testing.T) {
+	items := []model.InventoryItem{
+		{Title: "2020 Audi A4", PrimaryImage: "https://img.test/a/car-1.jpg?w=300"},
+		{Title: "2020 Audi A4", Price: "$10,000", PrimaryImage: "https://img.test/a/car-1.jpg?w=900"},
+	}
+	out := Dedupe(items)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 merged item got %d", len(out))
+	}
+	if out[0].Price != "$10,000" {
+		t.Fatalf("merge lost the price: %q", out[0].Price)
+	}
+}
+
+// A bogus stock value shared across a page (an empty "Stock #" cell that
+// captured the model year) must not merge distinct vehicles.
+func TestDedupe_NeverMergesDifferentVINs(t *testing.T) {
+	items := []model.InventoryItem{
+		{Title: "2018 Honda CR-V", StockID: "2018", VIN: "7FARW2H52LE004353", Price: "$14,991"},
+		{Title: "2018 Subaru Outback", StockID: "2018", VIN: "4S4BSANC2J3376066", Price: "$15,499"},
+		{Title: "2018 Mazda CX-5", StockID: "2018", VIN: "JM3KFBDM4J0329501", Price: "$16,200"},
+	}
+	out := Dedupe(items)
+	if len(out) != 3 {
+		t.Fatalf("expected 3 distinct vehicles got %d", len(out))
+	}
+	// The same VIN seen twice still merges.
+	dup := []model.InventoryItem{
+		{StockID: "A1", VIN: "7FARW2H52LE004353", Title: "2018 Honda CR-V"},
+		{StockID: "A1", VIN: "7FARW2H52LE004353", Price: "$14,991"},
+	}
+	if merged := Dedupe(dup); len(merged) != 1 || merged[0].Price != "$14,991" {
+		t.Fatalf("same VIN should merge: %+v", merged)
+	}
+}

@@ -42,24 +42,38 @@ type batchDetailLine struct {
 	Results map[string]string `json:"results"`
 }
 
+// selectDetailURLs picks the pages worth rendering and reports how many were
+// cut by the cap. Items that already carry every detail field are skipped — the
+// same gate the inline path uses — since spending a render on them adds nothing
+// and, on a bot-protected host, is how a batch starts getting refused.
+//
+// dropped is returned rather than swallowed: truncating silently reads as a
+// clean run while leaving every vehicle past the cap with no stock number.
+func selectDetailURLs(items []model.InventoryItem, maxPages int) (urls []string, dropped int) {
+	seen := map[string]bool{}
+	urls = make([]string, 0, len(items))
+	for _, it := range items {
+		if it.URL == "" || seen[it.URL] || detailFetchWouldAddNothing(it) {
+			continue
+		}
+		urls = append(urls, it.URL)
+		seen[it.URL] = true
+	}
+	if maxPages > 0 && len(urls) > maxPages {
+		dropped = len(urls) - maxPages
+		urls = urls[:maxPages]
+	}
+	return urls, dropped
+}
+
 // PrefetchAndPopulate fetches all detail pages in one session and returns items
 // with detail fields populated. Items without a URL pass through unchanged.
 // On error (e.g. killed on deadline) it still populates from whatever pages
 // were streamed before the failure and returns them alongside the error.
 func (b *BatchDetailFetcher) PrefetchAndPopulate(ctx context.Context, items []model.InventoryItem, site config.SiteConfig) ([]model.InventoryItem, error) {
-	urls := make([]string, 0, len(items))
-	seen := map[string]bool{}
-	for _, it := range items {
-		if it.URL != "" && !seen[it.URL] {
-			urls = append(urls, it.URL)
-			seen[it.URL] = true
-		}
-	}
+	urls, dropped := selectDetailURLs(items, b.MaxPages)
 	if len(urls) == 0 {
 		return items, nil
-	}
-	if b.MaxPages > 0 && len(urls) > b.MaxPages {
-		urls = urls[:b.MaxPages]
 	}
 
 	htmlByURL, fetchErr := b.fetchAll(ctx, urls)
@@ -96,6 +110,10 @@ func (b *BatchDetailFetcher) PrefetchAndPopulate(ctx context.Context, items []mo
 		if perr == nil {
 			items[i] = populated
 		}
+	}
+	if fetchErr == nil && dropped > 0 {
+		fetchErr = fmt.Errorf("detail page cap reached: %d of %d vehicles were left without detail fields (raise DETAIL_MAX_PAGES, currently %d)",
+			dropped, dropped+b.MaxPages, b.MaxPages)
 	}
 	return items, fetchErr
 }

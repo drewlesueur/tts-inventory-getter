@@ -190,8 +190,10 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 				continue
 			}
 			if m := re.FindStringSubmatch(html); len(m) > 1 {
-				item.StockID = m[1]
-				break
+				if v := plausibleStockID(m[1]); v != "" {
+					item.StockID = v
+					break
+				}
 			}
 		}
 	}
@@ -244,9 +246,30 @@ func validVINCandidate(raw string) string {
 func findStockIDInText(text string) string {
 	re := regexp.MustCompile(`(?i)\bstock\s*#?[:\-]?\s*([a-z0-9\-]+)\b`)
 	if m := re.FindStringSubmatch(strings.TrimSpace(text)); len(m) > 1 {
-		return m[1]
+		return plausibleStockID(m[1])
 	}
 	return ""
+}
+
+// modelYearRe matches a bare four-digit year.
+var modelYearRe = regexp.MustCompile(`^(?:19|20)\d{2}$`)
+
+// plausibleStockID drops captures that are obviously not a stock number. A page
+// with an empty "Stock # " cell concatenates with whatever text follows, so the
+// year off the vehicle title gets captured — and because dedupeKey prefers
+// stock, that one bogus value merges unrelated vehicles together.
+func plausibleStockID(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" || isStockLabelWord(v) || modelYearRe.MatchString(v) {
+		return ""
+	}
+	// Dealer stock numbers always carry a digit (K14394A, P558569, 106912). A
+	// purely alphabetic capture is the next word after an empty label cell —
+	// "CERTIFIED", "NUMBER" — never a stock number.
+	if !strings.ContainsAny(v, "0123456789") {
+		return ""
+	}
+	return v
 }
 
 // parseVDPInfoBlocks reads the carsforsale.com vehicle-detail spec pairs,
@@ -267,6 +290,13 @@ func parseVDPInfoBlocks(doc *goquery.Document) map[string]string {
 }
 
 func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, html string) {
+	// goquery's .Text() includes the contents of <style> and <script>, so the
+	// label sweeps below would mine CSS and JS as if it were spec data — an
+	// inline font stack containing "Apple Color Emoji" was being read as
+	// color: Emoji. Images are already extracted by the caller, so dropping
+	// these nodes here costs nothing.
+	doc.Find("script, style, noscript").Remove()
+
 	kv := map[string]string{}
 
 	// Seed with the clean carsforsale.com spec pairs first.
@@ -412,8 +442,11 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 	}
 
 	if item.Color == "" {
+		// Match the rendered text, not the raw HTML: a CSS font stack containing
+		// "Apple Color Emoji" satisfies this pattern and yields color: Emoji.
+		// doc has already had its <style>/<script> nodes removed above.
 		re := regexp.MustCompile(`(?i)\b(?:exterior\s+color|color)\b[:\s]+([a-z0-9][a-z0-9\s\-\/]{1,40})`)
-		if m := re.FindStringSubmatch(html); len(m) > 1 {
+		if m := re.FindStringSubmatch(doc.Text()); len(m) > 1 {
 			item.Color = clean(m[1])
 		}
 	}

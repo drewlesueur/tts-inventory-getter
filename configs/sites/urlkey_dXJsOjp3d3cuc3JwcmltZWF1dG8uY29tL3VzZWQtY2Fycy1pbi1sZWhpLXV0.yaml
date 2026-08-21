@@ -1,0 +1,43 @@
+name: url::www.srprimeauto.com/used-cars-in-lehi-ut
+# Overfuel (static.overfuel.com) on Next.js. The full record for every vehicle is
+# in __NEXT_DATA__ at props.pageProps.inventory.results, which NextDataExtractor
+# already walks — the DOM selectors below are a backstop and for card counting.
+#
+# Pagination is /page/N with a <link rel="next"> chain, 25 per page, and the last
+# page omits the link. inventory.meta.total carries the count (108 at time of writing).
+#
+# No stockSelector on purpose: this dealer publishes no stock numbers at all
+# (stocknumber is null in the feed AND on the VDP), and the card still renders a
+# bare "Stock # " label. Mapping that would give every vehicle the same stock id,
+# which dedupeKey prefers — collapsing the whole page to one item.
+baseUrl: https://www.srprimeauto.com/used-cars-in-lehi-ut
+listPage:
+    waitSelectors:
+        - '[data-cy=''vehicle-card'']'
+    cardSelector: '[data-cy=''vehicle-card'']'
+    titleSelector: h2
+    urlSelector: a[href*='/inventory/']
+    stockSelector: ""
+    priceSelector: .label-price
+    mileageSelector: .srp-miles .ms-auto
+    imageSelector: img.img-srp
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-21T16:00:00Z"

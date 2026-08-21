@@ -53,6 +53,12 @@ type DetailPageConfig struct {
 	ImageSelectors []string `yaml:"imageSelectors" json:"imageSelectors"`
 	VINSelector    string   `yaml:"vinSelector" json:"vinSelector"`
 	StockSelector  string   `yaml:"stockSelector" json:"stockSelector"`
+	// Skip opts a site out of detail fetching, which is otherwise always on.
+	// The selectors above only refine it — the generic label heuristics in
+	// fillCommonVehicleFields recover VIN, stock, mileage and specs without them.
+	// Set this for sites where one request per vehicle is too costly or where the
+	// detail pages are behind protection the list page is not.
+	Skip bool `yaml:"skip,omitempty" json:"skip,omitempty"`
 }
 
 type RegexConfig struct {

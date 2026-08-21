@@ -1,0 +1,43 @@
+name: url::www.stricklandauto.com/inventory
+# Custom Tailwind/Alpine site with clean data-mlr hooks. 30 cards per page,
+# 43 total (#inv-total / [data-total]), paginated with ?page=N.
+#
+# The list card has no VIN and no stock number; the VDP carries the VIN as
+# "VIN: 3TMMU4FN8FM087135" plus an ld+json block, which the detail-page
+# heuristics pick up. Mileage also comes from the VDP — on the card it sits in an
+# unclassed <span>, with nothing stable to select.
+#
+# No stockSelector: this dealer publishes no stock numbers. Note the VDP ld+json
+# contains schema.org "InStock", which is exactly the kind of token
+# plausibleStockID exists to reject.
+baseUrl: https://www.stricklandauto.com/inventory
+listPage:
+    waitSelectors:
+        - '[data-mlr=''vehicle-card'']'
+    cardSelector: '[data-mlr=''vehicle-card'']'
+    titleSelector: '[data-mlr=''vehicle-card-title'']'
+    urlSelector: a[href*='/inventory/']
+    stockSelector: ""
+    priceSelector: '[data-mlr=''vehicle-card-price'']'
+    mileageSelector: ""
+    imageSelector: img
+    totalSelector: '#inv-total'
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-21T16:30:00Z"

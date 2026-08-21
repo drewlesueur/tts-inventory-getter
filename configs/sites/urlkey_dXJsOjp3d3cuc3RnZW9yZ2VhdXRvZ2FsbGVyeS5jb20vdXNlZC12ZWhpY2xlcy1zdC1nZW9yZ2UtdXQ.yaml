@@ -1,0 +1,39 @@
+name: url::www.stgeorgeautogallery.com/used-vehicles-st-george-ut
+# DealerFire / DealerSocket (cdn-ds.com assets, mod-*-theme1 markup). Everything
+# is server-rendered on the list page, including the VIN on the Carfax widget's
+# data-vin attribute, so no detail fetch is needed.
+#
+# Pagination is offset/limit via <link rel="next" href="?limit=20&offset=N">, 20
+# per page. The generic rel=next walk follows it once looksLikePaginationOrInventoryURL
+# accepts "offset=" — the last page simply omits the link, which ends the walk.
+baseUrl: https://www.stgeorgeautogallery.com/used-vehicles-st-george-ut
+listPage:
+    waitSelectors:
+        - .inventory-item.js-vehicle-item
+    cardSelector: .inventory-item.js-vehicle-item
+    titleSelector: .inventory-item_vehicle-title
+    urlSelector: a.js-vehicle-item-link
+    stockSelector: .inventory-item_sub-title_item
+    priceSelector: .price_value
+    mileageSelector: .inventory-item_vehicle-highlights li
+    imageSelector: img.inventory-item_slider_img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-21T15:43:44Z"

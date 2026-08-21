@@ -152,11 +152,11 @@ func (c Client) Discover(ctx context.Context, sourceURL, html string) (config.Si
 	site.DetailPage.VINSelector = p.DetailPage.VINSelector
 	site.Regex.Stock = p.Regex.Stock
 	if len(site.Regex.Stock) == 0 {
-		site.Regex.Stock = []string{`(?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)`}
+		site.Regex.Stock = []string{`(?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)`}
 	}
 	site.Regex.VIN = p.Regex.VIN
 	if len(site.Regex.VIN) == 0 {
-		site.Regex.VIN = []string{`\\b([A-HJ-NPR-Z0-9]{17})\\b`}
+		site.Regex.VIN = []string{`\b([A-HJ-NPR-Z0-9]{17})\b`}
 	}
 	site.Discovery.Confidence = p.Discovery.Confidence
 	site.Discovery.Notes = strings.TrimSpace(p.Discovery.Notes)

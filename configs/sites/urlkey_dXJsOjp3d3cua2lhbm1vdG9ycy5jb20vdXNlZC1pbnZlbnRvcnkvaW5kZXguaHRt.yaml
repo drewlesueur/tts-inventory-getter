@@ -1,0 +1,43 @@
+name: url::www.kianmotors.com/used-inventory/index.htm
+# Dealer.com (DDC) v9, fronted by Akamai bot manager — plain HTTP gets a 403
+# "BOT-BROWSER-IMPERSONATOR", so this needs the browser/curl_cffi path.
+#
+# The card markup carries no VIN and little detail; the real records live in the
+# DDC.WS.state['ws-inv-data'] view model, which expandDealerDotComInventory
+# (internal/scrape/dealerdotcom.go) parses and swaps in. That same blob supplies
+# totalCount/pageSize, which drives the ?start=N walk — the site's own pagination
+# links are ellipsis-elided and would be dropped by the URL filter regardless.
+#
+# Selectors below are the fallback for the occasional render that finishes before
+# the widget writes its state.
+baseUrl: https://www.kianmotors.com/used-inventory/index.htm
+listPage:
+    waitSelectors:
+        - li.vehicle-card-detailed .price-value
+    cardSelector: li.vehicle-card-detailed
+    titleSelector: .vehicle-card-title
+    urlSelector: a[href*='/used/'], a[href*='/certified/'], a[href*='/new/']
+    stockSelector: .stockNumber
+    priceSelector: .final-price .price-value, .price-value
+    mileageSelector: .ddc-odometer, li.odometer
+    imageSelector: img.ddc-photo, .img-container img
+    totalSelector: .ddc-result-count
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 12
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-21T00:00:00Z"

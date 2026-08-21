@@ -173,10 +173,16 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			errs = append(errs, e...)
 			reportItemsProgress(opts, "items_extracted", allItems)
 		}
-		if effectiveMaxItems > 0 && len(allItems) >= effectiveMaxItems {
-			allItems = allItems[:effectiveMaxItems]
-			reportItemsProgress(opts, "items_limited", allItems)
-			break
+		// Dedupe before measuring: several extractors run over the same page, so
+		// a raw count reaches the cap at a fraction of the real inventory and
+		// truncates the walk early (Dedupe is stable across repeated passes).
+		if effectiveMaxItems > 0 {
+			allItems = Dedupe(allItems)
+			if len(allItems) >= effectiveMaxItems {
+				allItems = allItems[:effectiveMaxItems]
+				reportItemsProgress(opts, "items_limited", allItems)
+				break
+			}
 		}
 	}
 	for i := range allItems {
@@ -196,7 +202,11 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 		errs = filteredErrs
 	}
 
-	detailsWanted := len(site.DetailPage.ImageSelectors) > 0 || site.DetailPage.VINSelector != "" || site.DetailPage.StockSelector != ""
+	// Detail fetching is on for every site unless explicitly skipped. Most list
+	// pages omit VIN, stock or mileage entirely, and the detail-page heuristics
+	// recover them without any per-site selectors — so opting in per config meant
+	// silently shipping incomplete records. Costs one request per vehicle.
+	detailsWanted := !site.DetailPage.Skip
 	if detailsWanted && s.BatchDetailFetcher != nil {
 		// Render all detail pages in one Camoufox session (fast, DataDome-safe).
 		// On error (e.g. run deadline killed the batch) populated still carries
@@ -212,12 +222,28 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			}
 		}
 		reportItemsProgress(opts, "details_completed", allItems)
-	} else if detailsWanted {
-		sem := make(chan struct{}, s.Concurrency)
+	} else if detailsWanted && s.DetailFetcher != nil {
+		// Concurrency is optional on Service; an unbuffered semaphore would
+		// deadlock on the first send.
+		concurrency := s.Concurrency
+		if concurrency <= 0 {
+			concurrency = 4
+		}
+		sem := make(chan struct{}, concurrency)
 		wg := sync.WaitGroup{}
 		mu := sync.Mutex{}
+		skipped := 0
 		for idx := range allItems {
 			if allItems[idx].URL == "" {
+				continue
+			}
+			// Platforms that hand us a full record up front (Space Auto's search
+			// API, Dealer.com's view model) leave nothing for the detail page to
+			// add, and firing one request per vehicle at them is pure cost — on
+			// bot-protected hosts it is also how an IP gets flagged. Fetch only
+			// where a field is actually missing.
+			if detailFetchWouldAddNothing(allItems[idx]) {
+				skipped++
 				continue
 			}
 			sem <- struct{}{}
@@ -240,6 +266,12 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			}(idx)
 		}
 		wg.Wait()
+		if s.Logger != nil && skipped > 0 {
+			s.Logger.Info("detail fetch skipped for already-complete items",
+				zap.String("sourceUrl", sourceURL),
+				zap.Int("skipped", skipped),
+				zap.Int("total", len(allItems)))
+		}
 		reportItemsProgress(opts, "details_completed", allItems)
 	}
 	for i := range allItems {
@@ -267,6 +299,19 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	}
 	reportItemsProgress(opts, "completed", allItems)
 	return RunResult{Items: allItems, Errors: errs}
+}
+
+// detailFetchWouldAddNothing reports whether a listing already carries every
+// field the detail page is fetched for. Specs (engine, colour, drivetrain) are
+// deliberately excluded: they are refinements, and requiring them would force a
+// request for every vehicle on sites that already supply identity and pricing.
+func detailFetchWouldAddNothing(it model.InventoryItem) bool {
+	for _, v := range []string{it.Title, it.URL, it.VIN, it.StockID, it.Price, it.Mileage, it.PrimaryImage} {
+		if strings.TrimSpace(v) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func reportItemsProgress(opts Options, stage string, items []model.InventoryItem) {
@@ -324,6 +369,11 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				if isDataDomeChallenge(h) {
 					return "", fmt.Errorf("datadome challenge still present after all bypass strategies")
 				}
+				// Must run before the card count below: a Space Auto shell ships
+				// empty ".vehicle card" skeletons that would otherwise read as a
+				// hydrated page and short-circuit the walk with a dozen blanks.
+				h = expandSpaceAutoInventory(ctx, pageURL, h)
+				h = expandDealerDotComInventory(ctx, pageURL, h)
 				cardCount := countCards(h, site.ListPage.CardSelector)
 				// A successful HTTP response can still be only the server-rendered shell
 				// for client-side inventory apps. If a card selector is configured but
@@ -404,6 +454,10 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	if renderErr != nil {
 		return "", renderErr
 	}
+	// Space Auto markers live in the served HTML, so this applies to the plain
+	// fetch path too — unlike the iMotor hook, which only sees browser output.
+	html = expandSpaceAutoInventory(ctx, pageURL, html)
+	html = expandDealerDotComInventory(ctx, pageURL, html)
 	cardCount := 0
 	if site.ListPage.CardSelector != "" {
 		cardCount = countCards(html, site.ListPage.CardSelector)
@@ -646,12 +700,35 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		seen[next] = struct{}{}
 		out = append(out, next)
 	}
+	for _, next := range extractDealerCarSearchPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
+	for _, next := range extractNumberedPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
+	for _, next := range extractDealerDotComPageURLs(pageURL, html) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	return out
 }
 
-// no trailing \b: goquery .Text() concatenates nodes without whitespace, so the
-// total may run into following text ("Page 1 of 3Next")
-var pageXofYRe = regexp.MustCompile(`(?i)\bpage\s+(\d+)\s+of\s+(\d+)`)
+// No anchoring \b on either side: goquery .Text() concatenates sibling nodes
+// without whitespace, so the widget text arrives as "PrevPage: 1 of 3Next" and
+// a word boundary would fail against both the preceding and following labels.
+// The optional colon covers DealerCarSearch's "Page: 1 of 6" phrasing.
+var pageXofYRe = regexp.MustCompile(`(?i)page\s*:?\s*(\d+)\s+of\s+(\d+)`)
 
 // extractPageNumberParamURLs handles DealerCenter/carsforsale-platform dealer
 // sites whose pagination is a JS form POST with no crawlable page hrefs. The
@@ -692,13 +769,129 @@ func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string 
 	return out
 }
 
+// extractDealerCarSearchPageURLs handles DealerCarSearch dealer sites (i08r_*
+// markup). Their pager is a <button onClick="changePage(this)"> that sets a
+// hidden #PageNumber and re-submits the filter form, so there are no crawlable
+// hrefs. The widget shows "Page: X of Y" and the server accepts a plain GET,
+// but note the query param is ?page=N — unlike the DealerCenter platform above,
+// this one silently ignores ?PageNumber=N and re-serves page 1.
+//
+// Emitting every remaining page (not just the next) keeps one bad fetch from
+// halting the walk, matching extractPageNumberParamURLs.
+func extractDealerCarSearchPageURLs(pageURL string, doc *goquery.Document) []string {
+	pager := doc.Find("[class*='pager-summary'], .i08r_pager")
+	if pager.Length() == 0 {
+		return nil
+	}
+	m := pageXofYRe.FindStringSubmatch(pager.First().Text())
+	if len(m) < 3 {
+		return nil
+	}
+	cur := parsePositiveInt(m[1])
+	total := parsePositiveInt(m[2])
+	if cur <= 0 || total <= 1 || cur >= total {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, total-cur)
+	for p := cur + 1; p <= total; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("page", strconv.Itoa(p))
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// extractNumberedPageURLs handles the common case of a numbered pagination
+// widget using a ?page=N query param. Widgets elide the middle ("1 2 3 … 20"),
+// so following only the rendered links can strand whole pages; the highest
+// linked number is the page count, and every page in between is synthesized.
+//
+// Only the query form is handled here — /page/N path links are already followed
+// directly by the selector sweep above.
+func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
+	highest := 0
+	template := ""
+	linked := map[int]struct{}{}
+	doc.Find("[class*='pagination'] a[href], [class*='pager'] a[href]").Each(func(_ int, s *goquery.Selection) {
+		href, ok := s.Attr("href")
+		if !ok {
+			return
+		}
+		m := pageQueryParamRe.FindStringSubmatch(href)
+		if len(m) < 2 {
+			return
+		}
+		abs := absolutize(pageURL, href)
+		if abs == "" || !sameHost(pageURL, abs) {
+			return
+		}
+		// Build on the widget's own URL form, not the requested one: these sites
+		// canonicalize to a filtered path ("/inventory" -> "/inventory/new/ford?
+		// instock=true&...").
+		if template == "" {
+			template = abs
+		}
+		n := parsePositiveInt(m[1])
+		if n <= 0 {
+			return
+		}
+		linked[n] = struct{}{}
+		if n > highest {
+			highest = n
+		}
+	})
+	if highest <= 1 || highest > 500 {
+		return nil
+	}
+	if template == "" {
+		template = pageURL
+	}
+	u, err := url.Parse(template)
+	if err != nil {
+		return nil
+	}
+	// Skip when already on a numbered page: the first page's widget links the
+	// last page, so the full set is synthesized once and re-deriving it from a
+	// later page would only repeat work.
+	if cur, err := url.Parse(pageURL); err == nil && parsePositiveInt(cur.Query().Get("page")) > 1 {
+		return nil
+	}
+	// Only the elided numbers are synthesized. The rendered links are already
+	// queued verbatim by the selector sweep, and url.Values.Encode reorders the
+	// query — so re-emitting them would not string-match, and the duplicates
+	// would consume the maxPages budget instead of reaching real pages.
+	out := make([]string, 0, highest-1)
+	for p := 2; p <= highest; p++ {
+		if _, ok := linked[p]; ok {
+			continue
+		}
+		next := *u
+		q := next.Query()
+		q.Set("page", strconv.Itoa(p))
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+var pageQueryParamRe = regexp.MustCompile(`(?i)[?&]page=(\d+)`)
+
 // pageNumberParam returns the PageNumber query value of a URL, 0 if absent.
 func pageNumberParam(rawURL string) int {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return 0
 	}
-	return parsePositiveInt(u.Query().Get("PageNumber"))
+	if n := parsePositiveInt(u.Query().Get("PageNumber")); n > 0 {
+		return n
+	}
+	return parsePositiveInt(u.Query().Get("page"))
 }
 
 // currentPageFromHTML reads the "Page X of Y" widget, 0 if not present.
@@ -707,7 +900,7 @@ func currentPageFromHTML(html string) int {
 	if err != nil {
 		return 0
 	}
-	m := pageXofYRe.FindStringSubmatch(doc.Find("[class*='pagination']").Text())
+	m := pageXofYRe.FindStringSubmatch(doc.Find("[class*='pagination'], [class*='pager']").Text())
 	if len(m) < 3 {
 		return 0
 	}
@@ -815,6 +1008,9 @@ func looksLikePaginationOrInventoryURL(u string) bool {
 	}
 	return strings.Contains(l, "/page/") ||
 		strings.Contains(l, "page=") ||
+		// offset/limit paging (DealerFire and friends) — the link is already
+		// scoped to a pagination selector, so this cannot pull in stray URLs
+		strings.Contains(l, "offset=") ||
 		strings.Contains(l, "pagenum=") ||
 		strings.Contains(l, "pagesize=") ||
 		strings.Contains(l, "/inventory") ||

@@ -203,3 +203,90 @@ func TestFindVINInTextSkipsCSSClassTokens(t *testing.T) {
 		t.Fatalf("expected CSS token to be rejected, got %q", got)
 	}
 }
+
+// goquery's .Text() includes <style> contents, so the spec sweeps were mining
+// CSS: an inline font stack with "Apple Color Emoji" became color: Emoji.
+func TestPopulateDetailsFromHTML_IgnoresStyleAndScriptText(t *testing.T) {
+	html := `<html><head><style>
+	  :root{--font-family-sans-serif:-apple-system,"Segoe UI",Roboto,"Apple Color Emoji","Noto Color Emoji"}
+	</style></head><body>
+	  <script>var transmission = "Engine: bogus";</script>
+	  <div class="stock-number-field"><span class="stock">Stock: </span><span>106912</span></div>
+	  <div><span>Mileage: </span><span>2,717 Miles</span></div>
+	</body></html>`
+
+	site := config.SiteConfig{}
+	site.DetailPage.StockSelector = ".stock-number-field"
+
+	out, err := populateDetailsFromHTML(context.Background(), nil,
+		model.InventoryItem{URL: "https://dealer.test/viewdetails/new/x/y"}, site, html)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = NormalizeItem("https://dealer.test", out)
+	if out.StockID != "106912" {
+		t.Fatalf("stock = %q", out.StockID)
+	}
+	if out.Color != "" {
+		t.Fatalf("color mined from CSS: %q", out.Color)
+	}
+	if out.Mileage != "2,717 miles" {
+		t.Fatalf("mileage = %q", out.Mileage)
+	}
+}
+
+// Detail fetching runs for every site, so it must not fire a request when the
+// listing already carries everything the detail page would supply.
+func TestDetailFetchWouldAddNothing(t *testing.T) {
+	complete := model.InventoryItem{
+		Title: "2026 Ford Maverick XL", URL: "https://d.test/v/1",
+		VIN: "3FTTW8BA6TRA65715", StockID: "106912",
+		Price: "$29,483", Mileage: "2,717", PrimaryImage: "https://d.test/a.jpg",
+	}
+	if !detailFetchWouldAddNothing(complete) {
+		t.Fatal("a complete listing should not trigger a detail fetch")
+	}
+	// Any missing core field must still trigger one.
+	for name, mutate := range map[string]func(*model.InventoryItem){
+		"vin":     func(i *model.InventoryItem) { i.VIN = "" },
+		"stock":   func(i *model.InventoryItem) { i.StockID = "" },
+		"price":   func(i *model.InventoryItem) { i.Price = "" },
+		"mileage": func(i *model.InventoryItem) { i.Mileage = "" },
+		"image":   func(i *model.InventoryItem) { i.PrimaryImage = "" },
+		"title":   func(i *model.InventoryItem) { i.Title = "" },
+	} {
+		it := complete
+		mutate(&it)
+		if detailFetchWouldAddNothing(it) {
+			t.Fatalf("missing %s should still trigger a detail fetch", name)
+		}
+	}
+	// Specs are refinements, not triggers.
+	noSpecs := complete
+	noSpecs.Engine, noSpecs.Color, noSpecs.DriveType = "", "", ""
+	if !detailFetchWouldAddNothing(noSpecs) {
+		t.Fatal("absent specs should not force a detail fetch")
+	}
+}
+
+// An empty "Stock # " cell concatenates with the following text, so the model
+// year gets captured as the stock number.
+func TestFindStockIDInText_RejectsImplausibleCaptures(t *testing.T) {
+	for _, in := range []string{
+		"Stock # 2018 Honda CR-V EX", "Stock # ", "Stock Number:", "Stock #",
+		"Stock # CERTIFIED PRE-OWNED", "Stock Number", // empty cell running into the next word
+	} {
+		if got := findStockIDInText(in); got != "" {
+			t.Fatalf("%q -> %q, want empty", in, got)
+		}
+	}
+	for in, want := range map[string]string{
+		"Stock # K14394A": "K14394A",
+		"Stock: P558569":  "P558569",
+		"Stock 106912":    "106912",
+	} {
+		if got := findStockIDInText(in); got != want {
+			t.Fatalf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}

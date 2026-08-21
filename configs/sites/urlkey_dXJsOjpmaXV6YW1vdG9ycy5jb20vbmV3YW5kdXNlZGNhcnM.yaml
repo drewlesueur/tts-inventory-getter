@@ -1,0 +1,38 @@
+name: url::fiuzamotors.com/newandusedcars
+# DealerCarSearch platform (i08r_* markup). Pagination is a JS form POST via
+# changePage()/applyFiltersApi() with no crawlable hrefs; extractDealerCarSearchPageURLs
+# synthesizes the ?page=N URLs from the "Page: X of Y" pager text.
+baseUrl: https://fiuzamotors.com/newandusedcars
+listPage:
+    waitSelectors:
+        - .i08r-invBox
+    cardSelector: .i08r-invBox
+    titleSelector: .i08r_vehicleTitle, .i08r_vehicleTitleGrid
+    urlSelector: a[href*='/vdp/']
+    stockSelector: .i08r_optStock
+    priceSelector: .i08r_priceWrap .price-2, .i08r_priceWrap [class*='price-']
+    mileageSelector: .i08r_optMileage
+    imageSelector: img.i08r_mainImg
+    totalSelector: .pager-summary
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 0
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src]
+        - img[src*='vehicle']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-20T19:52:01Z"

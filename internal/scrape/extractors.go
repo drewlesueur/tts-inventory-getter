@@ -75,6 +75,11 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 		if item.VIN == "" {
 			item.VIN = firstAttr(s, "meta[itemprop='vehicleIdentificationNumber']", "content")
 		}
+		if item.VIN == "" {
+			// Carfax/history widgets routinely carry the VIN on the card even when
+			// nothing else does, which saves a detail fetch per vehicle.
+			item.VIN = validVINCandidate(firstAttr(s, "[data-vin]", "data-vin"))
+		}
 		normalized := NormalizeItem(pageURL, item)
 		if !looksLikeUsefulListing(normalized) {
 			return
@@ -558,11 +563,19 @@ func pickImageList(m map[string]any) []string {
 func firstNonEmptyImageAttr(s *goquery.Selection) string {
 	// Lazy-load attributes come first: carousels often set src to a generic
 	// placeholder and put the real image in data-lazy/data-src.
-	keys := []string{"data-lazy", "data-lazy-src", "data-src", "data-original", "data-image", "data-srcset", "srcset", "src"}
+	// Vue/Alpine SSR markup binds the real URL to :src and leaves no plain src,
+	// so those are checked last as a fallback.
+	keys := []string{"data-lazy", "data-lazy-src", "data-src", "data-original", "data-image", "data-srcset", "srcset", "src", ":src", "v-bind:src", "x-bind:src"}
 	for _, k := range keys {
 		raw := strings.TrimSpace(s.AttrOr(k, ""))
 		if raw == "" {
 			continue
+		}
+		if strings.HasPrefix(k, ":") || strings.Contains(k, "bind:") {
+			raw = unquoteBoundAttr(raw)
+			if raw == "" {
+				continue
+			}
 		}
 		if strings.HasPrefix(strings.ToLower(raw), "data:image/") {
 			continue
@@ -579,6 +592,29 @@ func firstNonEmptyImageAttr(s *goquery.Selection) string {
 		return raw
 	}
 	return ""
+}
+
+// unquoteBoundAttr pulls the URL out of a framework-bound attribute whose value
+// is a JS string literal ("'https://…'"). Anything else is an expression we
+// cannot evaluate, so it is rejected rather than guessed at.
+func unquoteBoundAttr(raw string) string {
+	v := strings.TrimSpace(raw)
+	if len(v) < 3 {
+		return ""
+	}
+	q := v[0]
+	if (q != '\'' && q != '"') || v[len(v)-1] != q {
+		return ""
+	}
+	v = v[1 : len(v)-1]
+	// A quote or + inside means concatenation, i.e. a computed expression.
+	if strings.ContainsAny(v, "'\"+") {
+		return ""
+	}
+	if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") && !strings.HasPrefix(v, "/") {
+		return ""
+	}
+	return v
 }
 
 // isPlaceholderImageURL filters out generic stock/placeholder graphics that

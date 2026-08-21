@@ -157,7 +157,10 @@ func setDefaults() {
 	viper.SetDefault("PYTHON_BIN", "python3")
 	viper.SetDefault("FETCH_SCRIPT_PATH", "scripts/fetch_page.py")
 	viper.SetDefault("DETAIL_SCRIPT_PATH", "scripts/fetch_details.py")
-	viper.SetDefault("DETAIL_MAX_PAGES", 150)
+	// A dealer SRP routinely runs past 150 vehicles, and anything past this cap
+	// comes back with no stock number or VIN, so keep it well above real
+	// inventory sizes rather than at a value normal runs trip over.
+	viper.SetDefault("DETAIL_MAX_PAGES", 1000)
 	viper.SetDefault("DEFAULT_MAX_PAGES", 20)
 	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
 	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)

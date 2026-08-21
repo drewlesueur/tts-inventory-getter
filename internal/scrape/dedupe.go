@@ -19,6 +19,20 @@ func Dedupe(items []model.InventoryItem) []model.InventoryItem {
 			continue
 		}
 		if idx, ok := seen[k]; ok {
+			// Two different VINs are two different vehicles, whatever the
+			// stock/url/image key says. Without this, a single bogus stock value
+			// shared across a page (an empty "Stock #" cell that captured the
+			// model year, say) merges the whole listing into a handful of items.
+			if vinsConflict(out[idx], it) {
+				k = "vin:" + strings.ToUpper(strings.TrimSpace(it.VIN))
+				if idx2, ok2 := seen[k]; ok2 {
+					out[idx2] = mergeInventoryItem(out[idx2], it)
+					continue
+				}
+				seen[k] = len(out)
+				out = append(out, it)
+				continue
+			}
 			out[idx] = mergeInventoryItem(out[idx], it)
 			continue
 		}
@@ -26,6 +40,13 @@ func Dedupe(items []model.InventoryItem) []model.InventoryItem {
 		out = append(out, it)
 	}
 	return out
+}
+
+// vinsConflict reports whether both items carry a VIN and the VINs differ.
+func vinsConflict(a, b model.InventoryItem) bool {
+	av := strings.ToUpper(strings.TrimSpace(a.VIN))
+	bv := strings.ToUpper(strings.TrimSpace(b.VIN))
+	return av != "" && bv != "" && av != bv
 }
 
 func mergeInventoryItem(base, cand model.InventoryItem) model.InventoryItem {
@@ -41,7 +62,10 @@ func mergeInventoryItem(base, cand model.InventoryItem) model.InventoryItem {
 	if base.Make == "" {
 		base.Make = cand.Make
 	}
-	if base.Model == "" {
+	// A title-derived model keeps only the first token ("Model" from "Model S"),
+	// so let a candidate that extends it word-for-word win — structured sources
+	// carry the full name where the title split could not.
+	if base.Model == "" || extendsModelName(base.Model, cand.Model) {
 		base.Model = cand.Model
 	}
 	if base.Color == "" {
@@ -149,6 +173,21 @@ func looksLikePriceOnlyTitle(title string) bool {
 	return priceOnlyTitleRe.MatchString(title)
 }
 
+// extendsModelName reports whether cand is base plus at least one further word,
+// e.g. "Model S" over "Model". Case-insensitive; a bare prefix like "Mode" does
+// not qualify, so unrelated models never overwrite each other.
+func extendsModelName(base, cand string) bool {
+	b := strings.TrimSpace(base)
+	c := strings.TrimSpace(cand)
+	if b == "" || c == "" || len(c) <= len(b) {
+		return false
+	}
+	if !strings.EqualFold(c[:len(b)], b) {
+		return false
+	}
+	return c[len(b)] == ' '
+}
+
 func dedupeKey(it model.InventoryItem) string {
 	stock := strings.ToUpper(strings.TrimSpace(it.StockID))
 	if stock == "" {
@@ -165,11 +204,15 @@ func dedupeKey(it model.InventoryItem) string {
 	if u != "" {
 		return "url:" + u
 	}
+	// canonicalURLKey drops the query, so an image served by an endpoint rather
+	// than a file ("/images/GetEvoxImage?vin=…") canonicalizes identically for
+	// every vehicle and would collapse a whole page into one item. Only trust an
+	// image key when the path itself names a file.
 	img := canonicalURLKey(it.PrimaryImage)
 	if img == "" && len(it.Images) > 0 {
 		img = canonicalURLKey(it.Images[0])
 	}
-	if img != "" {
+	if img != "" && pathNamesAFile(img) {
 		return "img:" + img
 	}
 	// Last resort: a content key so an item with no stock/VIN/URL/image (e.g. a
@@ -190,6 +233,20 @@ func contentKey(it model.InventoryItem) string {
 		return ""
 	}
 	return joined
+}
+
+// pathNamesAFile reports whether the URL's last path segment looks like a file
+// (has an extension) rather than an endpoint whose identity lives in the query.
+func pathNamesAFile(rawURL string) bool {
+	path := rawURL
+	if u, err := url.Parse(rawURL); err == nil && u.Path != "" {
+		path = u.Path
+	}
+	last := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		last = path[i+1:]
+	}
+	return strings.Contains(last, ".")
 }
 
 func canonicalURLKey(raw string) string {

@@ -1,0 +1,44 @@
+name: url::www.timdahleford.net/inventory
+# Team Velocity / secureoffersites platform, Vue SSR. /inventory canonicalizes to
+# new Ford in-stock inventory (217 vehicles), 11 per page over 20 ?page=N pages.
+#
+# Plain HTTP paginates correctly, so no browser is needed — but the card image is
+# only bound to :src (no plain src attribute), which firstNonEmptyImageAttr now
+# reads. Stock numbers are absent from the list markup; the VIN comes from the
+# /viewdetails/<vin>/ slug via vinFromURLPath.
+#
+# The pagination widget elides the middle ("1..10 … 20"), so extractNumberedPageURLs
+# synthesizes every ?page=N from the highest linked number.
+baseUrl: https://www.timdahleford.net/inventory
+listPage:
+    waitSelectors:
+        - a.srp-vehicle-box
+    cardSelector: div.clean-design-srp-card
+    titleSelector: h2.vehiclebox-title-main, .vehiclebox-title
+    urlSelector: a.srp-vehicle-box
+    stockSelector: ""
+    priceSelector: '[id$=''-price-summary-value''], .vehiclebox-msrp'
+    mileageSelector: ""
+    imageSelector: img.srp-vehiclebox-image, img
+    totalSelector: .vehicle_results_label
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 25
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+# The list card has no stock number at all; it only exists on the VDP, so detail
+# fetching is required for it (this also fills in mileage from the same row).
+detailPage:
+    imageSelectors: []
+    vinSelector: .page-vin
+    stockSelector: .stock-number-field
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-20T21:33:08Z"

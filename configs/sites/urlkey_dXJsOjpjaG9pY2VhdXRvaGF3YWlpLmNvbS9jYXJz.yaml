@@ -1,0 +1,36 @@
+name: url::choiceautohawaii.com/cars
+# Space Auto platform. The served SRP contains only empty ".vehicle card"
+# skeletons — the grid is client-rendered 12 at a time from a POST to
+# search-api.space.auto, and a headless render never trips its load observer.
+# expandSpaceAutoInventory (internal/scrape/spaceauto.go) calls that API and
+# swaps in the full inventory, so no pagination walk is needed here.
+baseUrl: https://choiceautohawaii.com/cars/
+listPage:
+    waitSelectors: []
+    cardSelector: .vehicle.card
+    titleSelector: .vehicle-title
+    urlSelector: a[href*='/vehicle/']
+    stockSelector: .vehicle-stock
+    priceSelector: .vehicle-price
+    mileageSelector: .vehicle-mileage
+    imageSelector: img.vehicle-image, img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    discoveredAt: "2026-08-21T00:00:00Z"
