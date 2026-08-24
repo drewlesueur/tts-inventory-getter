@@ -69,8 +69,16 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 		if item.Title == "" {
 			item.Title = firstAttr(s, "meta[itemprop='name']", "content")
 		}
+		if item.Title == "" {
+			// DealerCenter (DWS widgets) renders the title only as text glued to a
+			// duplicate hidden span; the modal container's data attribute is clean.
+			item.Title = firstAttr(s, "[data-dws-title]", "data-dws-title")
+		}
 		if item.StockID == "" {
 			item.StockID = firstAttr(s, "meta[itemprop='sku']", "content")
+		}
+		if item.StockID == "" {
+			item.StockID = firstAttr(s, "[data-vehicle-stock-no]", "data-vehicle-stock-no")
 		}
 		if item.VIN == "" {
 			item.VIN = firstAttr(s, "meta[itemprop='vehicleIdentificationNumber']", "content")
@@ -79,6 +87,10 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 			// Carfax/history widgets routinely carry the VIN on the card even when
 			// nothing else does, which saves a detail fetch per vehicle.
 			item.VIN = validVINCandidate(firstAttr(s, "[data-vin]", "data-vin"))
+		}
+		if item.VIN == "" {
+			// DealerCenter cards carry the VIN on the media-modal container.
+			item.VIN = validVINCandidate(firstAttr(s, "[data-vehicle-vin]", "data-vehicle-vin"))
 		}
 		normalized := NormalizeItem(pageURL, item)
 		if !looksLikeUsefulListing(normalized) {

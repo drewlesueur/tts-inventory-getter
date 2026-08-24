@@ -737,6 +737,20 @@ var pageXofYRe = regexp.MustCompile(`(?i)page\s*:?\s*(\d+)\s+of\s+(\d+)`)
 // Emitting all pages (not just the next) means one bad fetch can't halt the
 // walk — the site sometimes ignores PageNumber and re-serves page 1.
 func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string {
+	// Only for widgets with no crawlable page hrefs. When the pagination widget
+	// renders real numbered links (DealerCenter's DWS widget uses ?page_no=N
+	// anchors), the numbered-link walker covers every page and each synthesized
+	// ?PageNumber URL would just be fetched, re-serve page 1, and be discarded
+	// by the requested-vs-served guard — two wasted fetches per page.
+	crawlable := 0
+	doc.Find("[class*='pagination'] a[href]").Each(func(_ int, s *goquery.Selection) {
+		if parsePositiveInt(strings.TrimSpace(s.Text())) > 0 {
+			crawlable++
+		}
+	})
+	if crawlable >= 2 {
+		return nil
+	}
 	pagText := doc.Find("[class*='pagination']").Text()
 	m := pageXofYRe.FindStringSubmatch(pagText)
 	if len(m) < 3 {

@@ -51,6 +51,13 @@ def is_blocked(html: str) -> bool:
         return True
     if len(html) < 4000 and "Please enable JS and disable any ad blocker" in html:
         return True
+    # Cloudflare firewall/challenge pages. These come back with HTTP 200 through a
+    # browser, so status alone can't catch them. Markers are CF's own error shell,
+    # which a real dealer page never contains.
+    if 'id="cf-error-details"' in html or "Attention Required! | Cloudflare" in html:
+        return True
+    if len(html) < 20000 and "Just a moment..." in html and "/cdn-cgi/challenge-platform/" in html:
+        return True
     return False
 
 
@@ -125,6 +132,55 @@ def try_curl_cffi(url: str, cookie: str):
 
     print("[curl_cffi] ✓ success", file=sys.stderr)
     return resp.text, new_cookie or cookie
+
+
+# ── Strategy 1.5: user's own browser over CDP (rides its VPN extension) ──────
+def try_brave_cdp(url: str):
+    """Fetch through an already-running Brave/Chrome with --remote-debugging-port.
+
+    Some dealer platforms (DealerCenter behind Cloudflare, the Azure-IIS
+    DealerCarSearch hosts) firewall both non-US IPs and datacenter/VPN ranges,
+    so neither curl_cffi nor Camoufox from this machine's IP can get in. The
+    user's browser with a VPN extension exits through an IP those sites accept,
+    and browser-extension VPNs only proxy traffic inside that browser — so we
+    ride it via CDP. Skipped silently when no debug port is listening.
+    """
+    import os
+    import urllib.request
+
+    cdp = os.environ.get("BRAVE_CDP_URL", "http://localhost:9222")
+    try:
+        urllib.request.urlopen(f"{cdp}/json/version", timeout=2)
+    except Exception:
+        return None, None  # no debuggable browser running — not an error
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("[brave] playwright not installed", file=sys.stderr)
+        return None, None
+
+    print(f"[brave] fetching via user browser at {cdp}", file=sys.stderr)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(cdp)
+            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            page = ctx.new_page()
+            try:
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(5000)
+                html = page.content()
+                status = resp.status if resp else 0
+            finally:
+                page.close()
+        if status >= 400 or is_blocked(html):
+            print(f"[brave] blocked/error status={status}", file=sys.stderr)
+            return None, None
+        print("[brave] ✓ success", file=sys.stderr)
+        return html, None
+    except Exception as e:
+        print(f"[brave] error: {e}", file=sys.stderr)
+        return None, None
 
 
 # ── Strategy 2: Camoufox (reliable, C++ level Firefox patches) ───────────────
@@ -230,6 +286,14 @@ def main():
         if html:
             print(json.dumps({"html": html, "cookie": new_cookie or cookie, "status": 200}))
             return
+
+    # Strategy 1.5: the user's VPN'd browser, when one is running with a CDP
+    # port. Fast (~8s) and the only strategy that works for sites that firewall
+    # this machine's IP outright, so it goes before the Camoufox launch.
+    html, _ = try_brave_cdp(url)
+    if html:
+        print(json.dumps({"html": html, "cookie": cookie, "status": 200}))
+        return
 
     # Strategy 2: Camoufox (works without any cookie, from any IP)
     print("[main] falling back to Camoufox...", file=sys.stderr)

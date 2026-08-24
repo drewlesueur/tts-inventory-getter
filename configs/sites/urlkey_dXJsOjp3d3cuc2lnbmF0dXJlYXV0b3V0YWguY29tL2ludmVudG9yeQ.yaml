@@ -1,0 +1,46 @@
+name: url::www.signatureautoutah.com/inventory
+# DealerCenter (DWS widgets) site behind Cloudflare, same platform and blocking
+# as www.mmcutah.com — see that config for the full story. Fetches only succeed
+# through the Brave-CDP strategy in fetch_page.py (user's browser + US VPN
+# extension); the CF firewall hard-blocks non-US and datacenter IPs with an
+# HTTP-200 block page.
+#
+# Rendered cards duplicate across grid/list layouts and a Handlebars template
+# lives in a <script> tag; VIN/stock/title come from the data attributes on
+# .dws-vlp-modal-control-container via the DOMExtractor fallbacks. Visible title
+# and price elements glue duplicate/suffix text, hence no selectors for them.
+# Pagination: rendered ?page_no=N links (numbered-link walker), 10 per page.
+baseUrl: https://www.signatureautoutah.com/inventory/
+listPage:
+    waitSelectors:
+        - .dws-vehicle-listing-item
+    cardSelector: .list-group-item.dws-vehicle-listing-item
+    titleSelector: ""
+    urlSelector: a[href*='/inventory/']
+    stockSelector: ""
+    priceSelector: ""
+    mileageSelector: .dws-vehicle-field-mileage .dws-vehicle-listing-item-field-value
+    imageSelector: ""
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # Cards carry every gate field; VDPs are behind the same CF block.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*(?:number|#)?[:\-]?\s*([0-9]{3,8})
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCenter DWS widget; fetch requires US IP (Brave CDP via VPN extension)
+    discoveredAt: "2026-08-24T15:30:00Z"

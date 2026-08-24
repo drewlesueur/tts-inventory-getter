@@ -1,0 +1,59 @@
+name: url::www.mmcutah.com/inventory
+# DealerCenter (DWS widgets) site behind Cloudflare. The CF firewall hard-blocks
+# both non-US IPs and datacenter ranges, so fetches only succeed through the
+# Brave-CDP strategy in fetch_page.py (user's browser + VPN extension) or a US
+# residential IP. Camoufox from a blocked IP gets CF's block page with HTTP 200.
+#
+# Cards render twice (grid + list layouts) and once more as a Handlebars template
+# inside a <script> tag — goquery never sees the template, and dedupe collapses
+# the layout twins. VIN/stock/title live on data attributes of the media-modal
+# container (data-vehicle-vin / data-vehicle-stock-no / data-dws-title), which
+# the DOMExtractor attribute fallbacks pick up; the visible title element glues a
+# duplicate hidden span onto its text, so no titleSelector on purpose.
+#
+# Images are lazy background-image divs (data-background-image) — the bg-image
+# fallback in pickCardImage finds them; no imageSelector on purpose.
+#
+# Server-side pagination via ?pager=25&page_no=N (25 is the widget's max page
+# size; larger values silently fall back to 5). The widget renders every page
+# link, so the numbered-query walker needs no synthesis. The DealerCenter
+# ?PageNumber=N&PageSize=100 synthesis misfires here (this widget ignores it and
+# re-serves page 1) — the requested-vs-served guard discards those fetches.
+baseUrl: https://www.mmcutah.com/inventory/
+listPage:
+    waitSelectors:
+        - .dws-vehicle-listing-item
+    cardSelector: .list-group-item.dws-vehicle-listing-item
+    titleSelector: ""
+    urlSelector: a[href*='/inventory/']
+    stockSelector: ""
+    # .dws-vehicle-price-value glues "*Includes Dealer Fees" onto the amount, so
+    # let extractBestPriceText take the first $ amount from the card text instead.
+    priceSelector: ""
+    mileageSelector: .dws-vehicle-field-mileage .dws-vehicle-listing-item-field-value
+    imageSelector: ""
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # Cards already carry title, url, VIN, stock, price, mileage and image, so
+    # the per-item gate skips nearly every VDP anyway; skipping outright avoids
+    # burning Brave-CDP fetches on a Cloudflare-blocked host.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*(?:number|#)?[:\-]?\s*([0-9]{3,8})
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCenter DWS widget; fetch requires US IP (Brave CDP via VPN extension)
+    discoveredAt: "2026-08-24T15:00:00Z"

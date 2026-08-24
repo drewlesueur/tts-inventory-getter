@@ -29,6 +29,11 @@ def is_blocked(html: str) -> bool:
         return True
     if len(html) < 4000 and "Please enable JS and disable any ad blocker" in html:
         return True
+    # Cloudflare firewall/challenge shell — served with HTTP 200 through a browser.
+    if 'id="cf-error-details"' in html or "Attention Required! | Cloudflare" in html:
+        return True
+    if len(html) < 20000 and "Just a moment..." in html and "/cdn-cgi/challenge-platform/" in html:
+        return True
     return False
 
 
@@ -139,6 +144,51 @@ async def camoufox_fetch(urls):
     return results, dd_cookie
 
 
+async def brave_cdp_fetch(urls):
+    """Fetch urls through an already-running Brave/Chrome with a CDP debug port,
+    reusing one tab for the whole batch. Returns {url: html} for successes only;
+    silently returns {} when no debuggable browser is listening."""
+    import os
+    import urllib.request
+
+    cdp = os.environ.get("BRAVE_CDP_URL", "http://localhost:9222")
+    try:
+        urllib.request.urlopen(f"{cdp}/json/version", timeout=2)
+    except Exception:
+        return {}
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return {}
+
+    results = {}
+    print(f"[details] brave: fetching {len(urls)} via user browser at {cdp}", file=sys.stderr)
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(cdp)
+            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = await ctx.new_page()
+            try:
+                for i, url in enumerate(urls):
+                    try:
+                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        await page.wait_for_timeout(2500)
+                        html = await page.content()
+                        status = resp.status if resp else 0
+                        if status < 400 and not is_blocked(html):
+                            results[url] = html
+                            print(f"[details] brave {i+1}/{len(urls)} ok {url}", file=sys.stderr)
+                        else:
+                            print(f"[details] brave {i+1}/{len(urls)} blocked status={status} {url}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[details] brave FAILED {url}: {e}", file=sys.stderr)
+            finally:
+                await page.close()
+    except Exception as e:
+        print(f"[details] brave error: {e}", file=sys.stderr)
+    return results
+
+
 async def fetch_all(urls, cookie=""):
     import concurrent.futures
     import functools
@@ -154,6 +204,17 @@ async def fetch_all(urls, cookie=""):
             else:
                 blocked.append(url)
     print(f"[details] curl_cffi got {len(results)}/{len(urls)}; {len(blocked)} need browser", file=sys.stderr)
+
+    # 1.5. User's VPN'd browser over CDP, one session for the batch. The only
+    # path into sites that firewall this machine's IP (see fetch_page.py).
+    if blocked:
+        got = await brave_cdp_fetch(blocked)
+        for url, html in got.items():
+            results[url] = html
+            emit({"url": url, "html": html})
+        blocked = [u for u in blocked if u not in got]
+        if got:
+            print(f"[details] brave got {len(got)}; {len(blocked)} still blocked", file=sys.stderr)
 
     # 2. Slow path: Camoufox only for URLs that were blocked/failed.
     dd_cookie = ""
