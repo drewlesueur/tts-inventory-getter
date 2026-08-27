@@ -1,8 +1,8 @@
-name: url::www.sandiegoautosolutions.com/cars-for-sale
-baseUrl: https://www.sandiegoautosolutions.com/cars-for-sale
+name: url::westautosales.com/used-cars-in-utah
+baseUrl: https://westautosales.com/used-cars-in-utah
 listPage:
     waitSelectors: []
-    cardSelector: .inventory-item, article, li
+    cardSelector: li
     titleSelector: h2, h3
     urlSelector: a
     stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
@@ -31,4 +31,4 @@ regex:
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    discoveredAt: "2026-08-27T10:50:33Z"
+    discoveredAt: "2026-08-24T20:41:43Z"
