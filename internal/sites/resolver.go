@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -30,40 +29,18 @@ type Resolver struct {
 	Logger   *zap.Logger
 }
 
-const siteConfigCacheTTL = 7 * 24 * time.Hour
-
 func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (config.SiteConfig, error) {
 	sourceURL = strings.TrimSpace(sourceURL)
 	if sourceURL == "" {
 		return config.SiteConfig{}, fmt.Errorf("sourceUrl is required")
 	}
 	urlKey := cacheKeyForSourceURL(sourceURL)
-	var staleSite config.SiteConfig
-	hasStaleSite := false
 	if site, err := r.Loader.LoadByName(urlKey); err == nil {
-		if r.Loader.IsCacheFresh(urlKey, siteConfigCacheTTL) {
-			return site, nil
-		}
-		staleSite = site
-		hasStaleSite = true
-		if r.Logger != nil {
-			r.Logger.Info("site config cache expired, rediscovering",
-				zap.String("urlKey", urlKey),
-				zap.String("sourceURL", sourceURL),
-				zap.Duration("ttl", siteConfigCacheTTL),
-			)
-		}
+		// A persisted site template is user-managed configuration, not transient
+		// discovery output. Keep using it until it is explicitly updated/deleted.
+		return site, nil
 	}
 	if r.Discover == nil {
-		if hasStaleSite {
-			if r.Logger != nil {
-				r.Logger.Warn("using stale site config because discovery is disabled",
-					zap.String("urlKey", urlKey),
-					zap.String("sourceURL", sourceURL),
-				)
-			}
-			return staleSite, nil
-		}
 		return config.SiteConfig{}, fmt.Errorf("site config not cached for url=%s and Codex discovery disabled", sourceURL)
 	}
 	var html string
@@ -84,16 +61,6 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 	}
 	proposed, err := r.Discover.Discover(ctx, sourceURL, html)
 	if err != nil {
-		if hasStaleSite {
-			if r.Logger != nil {
-				r.Logger.Warn("discovery failed, using stale site config",
-					zap.String("urlKey", urlKey),
-					zap.String("sourceURL", sourceURL),
-					zap.Error(err),
-				)
-			}
-			return staleSite, nil
-		}
 		return config.SiteConfig{}, fmt.Errorf("discovery failed: %w", err)
 	}
 	if proposed.Name == "" {

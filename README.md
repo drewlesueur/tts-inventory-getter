@@ -21,6 +21,8 @@ Production-oriented scraper service for dealership inventory extraction.
 - `internal/metrics`: Prometheus metrics
 - `configs/sites/*.yaml`: per-dealership scrape configs
 
+Saved site YAML templates do not expire. Discovery runs only when no template exists for the requested URL; an existing template remains active until it is explicitly updated or deleted.
+
 ## API
 ### `POST /v1/scrape/once`
 Successful results are cached by dealership and normalized source URL for 24 hours. Requests during that window return the completed cached result without starting another live scrape. The client-provided `idempotencyKey` does not change the cache identity.

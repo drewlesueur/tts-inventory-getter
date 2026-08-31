@@ -3,7 +3,10 @@ package sites
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 	"github.com/drewlesueur/tts-inventory-getter/internal/discovery"
@@ -79,14 +82,27 @@ func TestResolver_UsesStaleURLKeyConfigWhenDiscoveryDisabled(t *testing.T) {
 }
 
 func TestResolver_UsesStaleURLKeyConfigWhenDiscoveryFails(t *testing.T) {
-	loader := config.NewLoader("")
-	loader.Cache("url::www.idealcarsaz.com/used-cars-in-mesa-az", config.SiteConfig{
+	dir := t.TempDir()
+	loader := config.NewLoader(dir)
+	key := "url::www.idealcarsaz.com/used-cars-in-mesa-az"
+	saved := config.SiteConfig{
 		Name:    "url::www.idealcarsaz.com/used-cars-in-mesa-az",
 		BaseURL: "https://www.idealcarsaz.com/used-cars-in-mesa-az",
 		ListPage: config.ListPageConfig{
 			CardSelector: ".vehicle-card",
 		},
-	})
+	}
+	if err := loader.SaveByName(key, saved); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected one saved config: entries=%d err=%v", len(entries), err)
+	}
+	old := time.Now().AddDate(-1, 0, 0)
+	if err := os.Chtimes(filepath.Join(dir, entries[0].Name()), old, old); err != nil {
+		t.Fatal(err)
+	}
 	discoverClient := &discovery.Client{}
 	r := Resolver{
 		Loader:   loader,
@@ -94,8 +110,7 @@ func TestResolver_UsesStaleURLKeyConfigWhenDiscoveryFails(t *testing.T) {
 		Fetcher:  fakeFetcher{html: "<html></html>"},
 	}
 
-	// Override the discover call by temporarily swapping method behavior via nil API key path:
-	// this forces discovery failure and validates stale fallback.
+	// Even a year-old template is permanent and must bypass discovery.
 	discoverClient.APIKey = ""
 	discoverClient.Model = "gpt-4.1-mini"
 

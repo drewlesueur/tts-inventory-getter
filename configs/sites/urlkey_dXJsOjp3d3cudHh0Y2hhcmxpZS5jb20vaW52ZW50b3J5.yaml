@@ -27,8 +27,8 @@ detailPage:
     stockSelector: ""
 regex:
     stock:
-        - (?i)stock\\s*#?[:\\-]?\\s*([a-z0-9\\-]+)
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
     vin:
-        - \\b([A-HJ-NPR-Z0-9]{17})\\b
+        - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    discoveredAt: "2026-08-18T14:02:44Z"
+    discoveredAt: "2026-08-28T07:08:52Z"

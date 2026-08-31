@@ -34,5 +34,3 @@ regex:
         - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
-discovery:
-    discoveredAt: "2026-08-20T19:52:01Z"

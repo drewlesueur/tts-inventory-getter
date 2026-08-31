@@ -1,8 +1,8 @@
-name: url::www.stricklandauto.com/inventory
-baseUrl: https://www.stricklandauto.com/inventory
+name: url::www.usedvwaudi.com/search-used-cars-near-phoenix
+baseUrl: https://www.usedvwaudi.com/search-used-cars-near-phoenix
 listPage:
     waitSelectors: []
-    cardSelector: .overflow-hidden, .bg-white
+    cardSelector: li
     titleSelector: h2, h3
     urlSelector: a
     stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
@@ -31,4 +31,4 @@ regex:
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    discoveredAt: "2026-08-29T13:55:43Z"
+    discoveredAt: "2026-08-29T14:00:26Z"

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -232,24 +231,6 @@ func (l Loader) ClearCacheFiles() error {
 		}
 	}
 	return nil
-}
-
-func (l Loader) IsCacheFresh(name string, maxAge time.Duration) bool {
-	if strings.TrimSpace(name) == "" {
-		return false
-	}
-	if maxAge <= 0 {
-		return true
-	}
-	if l.Dir == "" {
-		return true
-	}
-	p := filepath.Join(l.Dir, encodeCacheFilename(name)+".yaml")
-	fi, err := os.Stat(p)
-	if err != nil {
-		return false
-	}
-	return time.Since(fi.ModTime()) <= maxAge
 }
 
 func encodeCacheFilename(key string) string {
