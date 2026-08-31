@@ -23,6 +23,11 @@ type ScrapeOptions struct {
 	MaxScrollAttempts  int    `json:"maxScrollAttempts,omitempty"`
 	MaxLoadMoreClicks  int    `json:"maxLoadMoreClicks,omitempty"`
 	MaxItems           int    `json:"maxItems,omitempty"`
+	// ForceLive makes /v1/scrape/run bypass the cache-only/bot-protected
+	// cache-first path and always scrape live. The hybrid local worker sets it:
+	// its whole job is producing the fresh result the cloud's cache serves, and
+	// without it the local server 404s on the hardcoded cache-only domains.
+	ForceLive *bool `json:"forceLive,omitempty"`
 }
 
 type DiscoverFlowRequest struct {

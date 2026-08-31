@@ -60,7 +60,9 @@ def one_pass():
     for u in urls:
         try:
             print(f"[hybrid] scraping locally: {u}")
-            res = call(LOCAL_URL, "/v1/scrape/run", {"url": u, "timeoutSec": TIMEOUT_SEC}, timeout=TIMEOUT_SEC + 60)
+            res = call(LOCAL_URL, "/v1/scrape/run",
+                       {"url": u, "timeoutSec": TIMEOUT_SEC, "options": {"forceLive": True}},
+                       timeout=TIMEOUT_SEC + 60)
             items = res.get("items") or []
             errors = res.get("errors") or []
             if not items:

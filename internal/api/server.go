@@ -693,7 +693,8 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 
 	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
 	// bot-protected on this host) are served from the synced cache.
-	if s.shouldServeFromCache(r.Context(), req.URL) {
+	forceLive := req.Options != nil && req.Options.ForceLive != nil && *req.Options.ForceLive
+	if !forceLive && s.shouldServeFromCache(r.Context(), req.URL) {
 		cached, err := s.cachedInventoryFor(r.Context(), req.URL)
 		if err == nil {
 			writeJSON(w, http.StatusOK, map[string]any{

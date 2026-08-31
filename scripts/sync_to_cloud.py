@@ -53,7 +53,8 @@ def post(base, path, payload):
 
 # 1. Scrape locally (residential IP → works against DataDome)
 print(f"[local] scraping {scrape_url} ...")
-local = post(LOCAL_URL, "/v1/scrape/run", {"url": scrape_url, "timeoutSec": TIMEOUT_SEC})
+local = post(LOCAL_URL, "/v1/scrape/run", {"url": scrape_url, "timeoutSec": TIMEOUT_SEC,
+                                           "options": {"forceLive": True}})
 items = local.get("items") or []
 print(f"[local] got {len(items)} items")
 

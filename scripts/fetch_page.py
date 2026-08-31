@@ -167,7 +167,9 @@ def try_brave_cdp(url: str):
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = ctx.new_page()
             try:
-                resp = page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                # Slow dealer sites through the VPN tunnel routinely take 30-40s
+                # to domcontentloaded; 45s cut them off at the edge.
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=90000)
                 page.wait_for_timeout(5000)
                 html = page.content()
                 status = resp.status if resp else 0

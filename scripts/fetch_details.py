@@ -171,7 +171,9 @@ async def brave_cdp_fetch(urls):
             try:
                 for i, url in enumerate(urls):
                     try:
-                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        # Slow dealer sites through the VPN tunnel routinely take
+                        # 30-40s to domcontentloaded; 45s cut them off at the edge.
+                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=90000)
                         await page.wait_for_timeout(2500)
                         html = await page.content()
                         status = resp.status if resp else 0
