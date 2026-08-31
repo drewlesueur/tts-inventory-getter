@@ -220,58 +220,17 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 			if s.Logger != nil {
 				s.Logger.Warn("batch detail fetch failed", zap.Error(derr))
 			}
+			// The batch layer needs a working python env; when it dies (missing
+			// curl_cffi/camoufox on a fresh deploy, deadline kill) the inline Go
+			// fetcher still recovers details over plain HTTP for unprotected
+			// sites instead of shipping every vehicle with empty fields.
+			if s.DetailFetcher != nil {
+				errs = append(errs, s.fetchDetailsInline(ctx, allItems, site, sourceURL, opts)...)
+			}
 		}
 		reportItemsProgress(opts, "details_completed", allItems)
 	} else if detailsWanted && s.DetailFetcher != nil {
-		// Concurrency is optional on Service; an unbuffered semaphore would
-		// deadlock on the first send.
-		concurrency := s.Concurrency
-		if concurrency <= 0 {
-			concurrency = 4
-		}
-		sem := make(chan struct{}, concurrency)
-		wg := sync.WaitGroup{}
-		mu := sync.Mutex{}
-		skipped := 0
-		for idx := range allItems {
-			if allItems[idx].URL == "" {
-				continue
-			}
-			// Platforms that hand us a full record up front (Space Auto's search
-			// API, Dealer.com's view model) leave nothing for the detail page to
-			// add, and firing one request per vehicle at them is pure cost — on
-			// bot-protected hosts it is also how an IP gets flagged. Fetch only
-			// where a field is actually missing.
-			if detailFetchWouldAddNothing(allItems[idx]) {
-				skipped++
-				continue
-			}
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				dctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-				defer cancel()
-				item, err := s.DetailFetcher.FetchDetails(dctx, allItems[i], site)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: err.Error(), ItemURL: allItems[i].URL})
-					reportItemsProgress(opts, "details_progress", allItems)
-					return
-				}
-				allItems[i] = item
-				reportItemsProgress(opts, "details_progress", allItems)
-			}(idx)
-		}
-		wg.Wait()
-		if s.Logger != nil && skipped > 0 {
-			s.Logger.Info("detail fetch skipped for already-complete items",
-				zap.String("sourceUrl", sourceURL),
-				zap.Int("skipped", skipped),
-				zap.Int("total", len(allItems)))
-		}
+		errs = append(errs, s.fetchDetailsInline(ctx, allItems, site, sourceURL, opts)...)
 		reportItemsProgress(opts, "details_completed", allItems)
 	}
 	for i := range allItems {
@@ -348,6 +307,63 @@ func detailFetchWouldAddNothing(it model.InventoryItem) bool {
 		}
 	}
 	return true
+}
+
+// fetchDetailsInline runs the per-item detail fetcher over items still missing
+// fields, mutating the slice in place. It is both the non-batch path and the
+// fallback when the batch python fetcher fails.
+func (s Service) fetchDetailsInline(ctx context.Context, allItems []model.InventoryItem, site config.SiteConfig, sourceURL string, opts Options) []model.StructuredError {
+	// Concurrency is optional on Service; an unbuffered semaphore would
+	// deadlock on the first send.
+	concurrency := s.Concurrency
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+	sem := make(chan struct{}, concurrency)
+	wg := sync.WaitGroup{}
+	mu := sync.Mutex{}
+	errs := make([]model.StructuredError, 0)
+	skipped := 0
+	for idx := range allItems {
+		if allItems[idx].URL == "" {
+			continue
+		}
+		// Platforms that hand us a full record up front (Space Auto's search
+		// API, Dealer.com's view model) leave nothing for the detail page to
+		// add, and firing one request per vehicle at them is pure cost — on
+		// bot-protected hosts it is also how an IP gets flagged. Fetch only
+		// where a field is actually missing.
+		if detailFetchWouldAddNothing(allItems[idx]) {
+			skipped++
+			continue
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			dctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+			defer cancel()
+			item, err := s.DetailFetcher.FetchDetails(dctx, allItems[i], site)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, model.StructuredError{Code: "DETAIL_FETCH_FAILED", Message: err.Error(), ItemURL: allItems[i].URL})
+				reportItemsProgress(opts, "details_progress", allItems)
+				return
+			}
+			allItems[i] = item
+			reportItemsProgress(opts, "details_progress", allItems)
+		}(idx)
+	}
+	wg.Wait()
+	if s.Logger != nil && skipped > 0 {
+		s.Logger.Info("detail fetch skipped for already-complete items",
+			zap.String("sourceUrl", sourceURL),
+			zap.Int("skipped", skipped),
+			zap.Int("total", len(allItems)))
+	}
+	return errs
 }
 
 func reportItemsProgress(opts Options, stage string, items []model.InventoryItem) {

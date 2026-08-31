@@ -249,7 +249,14 @@ def main():
         emit({"error": "expected non-empty JSON array of urls"})
         sys.exit(1)
 
-    _, dd_cookie = asyncio.run(fetch_all(urls, cookie))
+    results, dd_cookie = asyncio.run(fetch_all(urls, cookie))
+    fetched = sum(1 for v in results.values() if v and v.strip())
+    if fetched == 0:
+        # Zero pages out of a non-empty batch is an environment failure (missing
+        # curl_cffi/camoufox, or every fetch path blocked) — returning cleanly
+        # here made the caller ship items with silently-empty detail fields.
+        emit({"error": f"0/{len(urls)} detail pages fetched — python deps missing or all fetch paths blocked"})
+        sys.exit(1)
     emit({"done": True, "cookie": dd_cookie})
 
 
