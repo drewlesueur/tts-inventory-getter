@@ -279,6 +279,13 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 		allItems[i] = applyItemAliases(allItems[i], opts.DealershipID, opts.SourceURL)
 	}
 	allItems = Dedupe(allItems)
+	allItems, invalidCount := filterInvalidInventoryItems(allItems)
+	if invalidCount > 0 {
+		errs = append(errs, model.StructuredError{
+			Code:    "INVALID_ITEMS_FILTERED",
+			Message: fmt.Sprintf("discarded %d extracted rows that did not contain credible vehicle data", invalidCount),
+		})
+	}
 	reportItemsProgress(opts, "details_deduped", allItems)
 
 	if opts.EnableAIEnrichment && s.AIEnricher != nil {
@@ -299,6 +306,35 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	}
 	reportItemsProgress(opts, "completed", allItems)
 	return RunResult{Items: allItems, Errors: errs}
+}
+
+// filterInvalidInventoryItems prevents navigation, sorting, and filter controls
+// from becoming inventory. A real row needs an identifier plus at least one
+// independent vehicle signal; a valid VIN alone is sufficiently authoritative.
+func filterInvalidInventoryItems(items []model.InventoryItem) ([]model.InventoryItem, int) {
+	out := make([]model.InventoryItem, 0, len(items))
+	invalid := 0
+	for _, it := range items {
+		vin := validVINCandidate(it.VIN)
+		stock := normalizeStockID(it.StockID)
+		hasURL := strings.TrimSpace(it.URL) != ""
+		hasDescriptiveData := strings.TrimSpace(it.Title) != "" ||
+			strings.TrimSpace(it.Price) != "" ||
+			strings.TrimSpace(it.Mileage) != "" ||
+			strings.TrimSpace(it.PrimaryImage) != "" ||
+			strings.TrimSpace(it.Year) != "" ||
+			strings.TrimSpace(it.Make) != "" ||
+			strings.TrimSpace(it.Model) != ""
+		credible := vin != "" ||
+			(!isMissingStockID(stock) && (hasURL || hasDescriptiveData)) ||
+			(hasURL && hasDescriptiveData)
+		if !credible {
+			invalid++
+			continue
+		}
+		out = append(out, it)
+	}
+	return out, invalid
 }
 
 // detailFetchWouldAddNothing reports whether a listing already carries every

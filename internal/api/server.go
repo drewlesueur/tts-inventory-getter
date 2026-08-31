@@ -867,6 +867,11 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 				writeProgress(progress.Stage, progress.TotalItems, attempt)
 			},
 		}
+		// Exercise both browser engines across automatic retries. A site broken in
+		// one renderer can recover without operator intervention over weekends.
+		if attempt%2 == 0 {
+			scrapeOpts.BrowserStrategy = "playwright_first"
+		}
 		if opts != nil {
 			if strings.TrimSpace(opts.BrowserStrategy) != "" {
 				scrapeOpts.BrowserStrategy = opts.BrowserStrategy
@@ -902,12 +907,18 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			IsRetrying:     false,
 			ProgressStage:  "completed",
 		}
-		if len(result.Errors) > 0 {
+		if len(result.Items) == 0 {
+			record.Status = model.RunStatusFailed
+			record.FailedItems = 1
+			record.FailureReason = firstErrorMessage(result.Errors)
+		} else if len(result.Errors) > 0 {
 			record.Status = model.RunStatusPartial
 		}
 		record.LastError = firstErrorMessage(result.Errors)
 		if record.Status == model.RunStatusPartial {
 			record.ProgressStage = "completed_with_errors"
+		} else if record.Status == model.RunStatusFailed {
+			record.ProgressStage = "failed"
 		}
 		finalRecord = record
 
@@ -976,11 +987,14 @@ func isRetryableScrapeFailure(result scrape.RunResult) bool {
 		return false
 	}
 	for _, e := range result.Errors {
-		if e.Code == "SCRAPE_RENDER_FAILED" && isTransientErrorMessage(e.Message) {
-			return true
+		message := strings.ToLower(e.Message)
+		if strings.Contains(message, "blocked redirect to local host") || strings.Contains(message, "blocked redirect to private host") {
+			return false
 		}
 	}
-	return false
+	// Empty output is never a successful scrape. Retry render failures, selector
+	// misses, bot challenges, and empty extraction with the alternate renderer.
+	return true
 }
 
 func isTransientErrorMessage(msg string) bool {

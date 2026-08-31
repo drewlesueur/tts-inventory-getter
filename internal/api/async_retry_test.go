@@ -43,6 +43,16 @@ type alwaysErrFetcher struct{ err error }
 
 func (f alwaysErrFetcher) Fetch(_ context.Context, _ string) (string, error) { return "", f.err }
 
+type emptyThenInventoryFetcher struct{ calls int }
+
+func (f *emptyThenInventoryFetcher) Fetch(_ context.Context, _ string) (string, error) {
+	f.calls++
+	if f.calls == 1 {
+		return "<html><body>No vehicles rendered yet</body></html>", nil
+	}
+	return `<div class="vehicle-card"><a href="/inventory/car-1">Car</a><h2>2020 Audi A4</h2><span class="stock">STK-1</span><span class="price">$100</span><img src="https://dealer.test/vehicle-1.jpg"/></div>`, nil
+}
+
 func testSiteConfig() config.SiteConfig {
 	site := config.SiteConfig{}
 	site.ListPage.CardSelector = ".vehicle-card"
@@ -93,8 +103,8 @@ func TestRunScrapeAsync_ExhaustsRetries(t *testing.T) {
 	if r.AttemptCount != 3 {
 		t.Fatalf("expected attemptCount=3 got %d", r.AttemptCount)
 	}
-	if r.Status != "partial_success" {
-		t.Fatalf("expected partial_success got %s", r.Status)
+	if r.Status != "failed" {
+		t.Fatalf("expected failed got %s", r.Status)
 	}
 	if r.LastError == "" {
 		t.Fatalf("expected lastError to be set")
@@ -116,7 +126,25 @@ func TestRunScrapeAsync_NonRetryableFailure(t *testing.T) {
 	if r.AttemptCount != 1 {
 		t.Fatalf("expected attemptCount=1 got %d", r.AttemptCount)
 	}
-	if r.Status != "partial_success" {
-		t.Fatalf("expected partial_success got %s", r.Status)
+	if r.Status != "failed" {
+		t.Fatalf("expected failed got %s", r.Status)
+	}
+}
+
+func TestRunScrapeAsync_RetriesEmptyExtractionThenRecovers(t *testing.T) {
+	f := &emptyThenInventoryFetcher{}
+	svc := scrape.Service{Fetcher: f, Extractors: []scrape.Extractor{scrape.DOMExtractor{}}, Concurrency: 1}
+	cfg := config.Config{ScrapeMaxAttempts: 2, ScrapeRetryBackoffSec: 1, DefaultRunTimeoutSec: 60}
+	st := store.NewMemoryResultStore()
+	s := NewServer(cfg, zap.NewNop(), svc, config.Loader{}, st, testMetrics(), nil, nil, nil)
+
+	s.runScrapeAsync("r4", "d1", "https://dealer.test/inventory", "idem-4", testSiteConfig(), 5*time.Second, nil)
+
+	r, err := st.GetResult(context.Background(), "r4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "success" || r.AttemptCount != 2 || len(r.Items) != 1 {
+		t.Fatalf("expected second-attempt recovery, got status=%s attempts=%d items=%d errors=%+v", r.Status, r.AttemptCount, len(r.Items), r.Errors)
 	}
 }

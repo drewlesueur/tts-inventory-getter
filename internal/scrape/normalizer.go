@@ -81,7 +81,14 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 		item.VIN = vinFromURLPath(item.URL)
 	}
 	if isMissingStockID(item.StockID) {
-		item.StockID = listingIDFromURL(item.URL)
+		// VIN is the stable cross-system identifier when a dealer does not publish
+		// its own stock number. Fall back to a numeric listing id only when neither
+		// a stock number nor a valid VIN is available.
+		if vin := validVINCandidate(item.VIN); vin != "" {
+			item.StockID = vin
+		} else {
+			item.StockID = listingIDFromURL(item.URL)
+		}
 	}
 	item.PrimaryImage = absolutize(baseURL, item.PrimaryImage)
 	if !isLikelyVehicleImageURL(item.PrimaryImage) {

@@ -73,6 +73,28 @@ func TestNormalizeItem_UsesNumericListingIDWhenStockIsMissing(t *testing.T) {
 	}
 }
 
+func TestNormalizeItem_UsesVINWhenStockIsMissing(t *testing.T) {
+	for _, stockID := range []string{"", "N/A", "Stock #"} {
+		in := model.InventoryItem{
+			StockID: stockID,
+			VIN:     "3fttw8ba6tra65715",
+			URL:     "/used-trucks/for-sale/example/2022/2191308/",
+		}
+		out := NormalizeItem("https://dealer.test/inventory/", in)
+		if out.StockID != "3FTTW8BA6TRA65715" {
+			t.Fatalf("stock %q: expected VIN fallback, got %q", stockID, out.StockID)
+		}
+	}
+}
+
+func TestNormalizeItem_PreservesPublishedStockIDInsteadOfVIN(t *testing.T) {
+	in := model.InventoryItem{StockID: "A-123", VIN: "3FTTW8BA6TRA65715"}
+	out := NormalizeItem("https://dealer.test", in)
+	if out.StockID != "A-123" {
+		t.Fatalf("expected published stock ID, got %q", out.StockID)
+	}
+}
+
 func TestNormalizeItem_DoesNotUseNonNumericURLSlugAsStockID(t *testing.T) {
 	in := model.InventoryItem{URL: "/inventory/example-truck/"}
 	out := NormalizeItem("https://dealer.test", in)

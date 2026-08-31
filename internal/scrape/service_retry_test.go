@@ -60,6 +60,12 @@ func (duplicateURLExtractor) Extract(_ context.Context, _ string, _ string, _ co
 	}, nil
 }
 
+type selectorNoiseExtractor struct{}
+
+func (selectorNoiseExtractor) Extract(_ context.Context, _ string, _ string, _ config.SiteConfig) ([]model.InventoryItem, []model.StructuredError) {
+	return []model.InventoryItem{{StockID: "NUMBER"}, {StockID: "OLDEST"}, {StockID: "NEWEST"}}, nil
+}
+
 func TestScrapeOnce_BrowserFallbackAfterHTTPTimeout(t *testing.T) {
 	b := &fallbackBrowser{}
 	s := Service{Browser: b, Fetcher: timeoutFetcher{}, Extractors: []Extractor{DOMExtractor{}}, Concurrency: 1}
@@ -147,5 +153,26 @@ func TestScrapeOnce_ReportsProgressCounts(t *testing.T) {
 	}
 	if !sawExtracted || !sawCompleted {
 		t.Fatalf("expected extracted and completed progress counts, got %#v", progress)
+	}
+}
+
+func TestScrapeOnce_FiltersSelectorNoiseThatLooksLikeStock(t *testing.T) {
+	site := config.SiteConfig{}
+	site.ListPage.CardSelector = "li"
+	site.ListPage.StockSelector = ".stock"
+	html := `<ul><li><span class="stock">NUMBER</span></li><li><span class="stock">OLDEST</span></li><li><span class="stock">NEWEST</span></li></ul>`
+	svc := Service{Fetcher: staticFetcher{html: html}, Extractors: []Extractor{selectorNoiseExtractor{}}}
+
+	res := svc.ScrapeOnce(context.Background(), "https://dealer.test/inventory", site)
+	if len(res.Items) != 0 {
+		t.Fatalf("expected selector noise to be rejected, got %+v", res.Items)
+	}
+	var invalid, noItems bool
+	for _, err := range res.Errors {
+		invalid = invalid || err.Code == "INVALID_ITEMS_FILTERED"
+		noItems = noItems || err.Code == "NO_ITEMS"
+	}
+	if !invalid || !noItems {
+		t.Fatalf("expected INVALID_ITEMS_FILTERED and NO_ITEMS, got %+v", res.Errors)
 	}
 }
