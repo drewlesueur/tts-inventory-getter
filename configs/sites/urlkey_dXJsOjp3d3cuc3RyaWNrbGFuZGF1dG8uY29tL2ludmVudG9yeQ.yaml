@@ -1,34 +1,34 @@
 name: url::www.stricklandauto.com/inventory
 baseUrl: https://www.stricklandauto.com/inventory
+# MotorLot inventory. Prefer its stable data-mlr hooks over generated Tailwind
+# classes. Stock and VIN are intentionally populated from each detail page.
 listPage:
-    waitSelectors: []
-    cardSelector: .overflow-hidden, .bg-white
-    titleSelector: h2, h3
-    urlSelector: a
-    stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
-    priceSelector: .price, [class*='price']
-    mileageSelector: .mileage, [class*='mileage']
-    imageSelector: img
-    totalSelector: ""
+    waitSelectors:
+        - '[data-mlr="vehicle-grid"]'
+        - '[data-mlr="vehicle-card"]'
+    cardSelector: '[data-mlr="vehicle-card"]'
+    titleSelector: '[data-mlr="vehicle-card-title"]'
+    urlSelector: 'a[href^="/inventory/"]'
+    stockSelector: ""
+    priceSelector: '[data-mlr="vehicle-card-price"]'
+    mileageSelector: ""
+    imageSelector: 'img[title*="at Strickland Auto"]'
+    totalSelector: '#inv-total'
     pagination:
-        type: ""
-        nextSelector: ""
+        type: next
+        nextSelector: 'nav[aria-label="Pagination"] a[href*="page="]'
         loadMoreSelector: ""
-        maxPages: 0
+        maxPages: 10
         infiniteScroll: false
         scrollMaxAttempts: 0
         clickMaxAttempts: 0
 detailPage:
     imageSelectors:
-        - .gallery img
-        - img[data-src]
-        - img[src*='vehicle']
+        - 'div[x-data*="active"] img[src*="cloudfront.net"]'
+        - 'img[title*="at Strickland Auto"]'
     vinSelector: ""
-    stockSelector: ""
+    stockSelector: 'p.text-xs.text-gray-400.mt-2'
 regex:
-    stock:
-        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    stock: []
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
-discovery:
-    discoveredAt: "2026-08-29T13:55:43Z"

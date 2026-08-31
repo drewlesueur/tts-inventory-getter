@@ -633,6 +633,7 @@ func effectiveMaxItems(configMax, detectedTotal int) int {
 // Require a numeric range before "of" (e.g. "1 - 11 of 24") to avoid matching
 // page-number patterns like "Page 1 of 1".
 var inventoryTotalTextRe = regexp.MustCompile(`(?i)(?:\d+\s*[-–—]\s*\d+\s+of\s+|total\s+)([0-9][0-9,]{0,8})\s*(?:vehicles?|cars?|results?|inventory|listings?)?`)
+var inventoryAvailableTextRe = regexp.MustCompile(`(?i)\b([0-9][0-9,]{0,8})\s+(?:vehicles?|cars?|results?|listings?)\s+available\b`)
 
 func detectInventoryTotal(html string, site config.SiteConfig) int {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
@@ -664,10 +665,14 @@ func detectInventoryTotal(html string, site config.SiteConfig) int {
 
 func parseTotalText(text string) int {
 	m := inventoryTotalTextRe.FindStringSubmatch(text)
-	if len(m) < 2 {
-		return 0
+	if len(m) >= 2 {
+		return parsePositiveInt(strings.ReplaceAll(m[1], ",", ""))
 	}
-	return parsePositiveInt(strings.ReplaceAll(m[1], ",", ""))
+	m = inventoryAvailableTextRe.FindStringSubmatch(text)
+	if len(m) >= 2 {
+		return parsePositiveInt(strings.ReplaceAll(m[1], ",", ""))
+	}
+	return 0
 }
 
 func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string {
