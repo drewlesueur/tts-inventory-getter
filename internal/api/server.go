@@ -181,24 +181,30 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
-	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
-		writeJSON(w, http.StatusOK, resultResponse(existing))
-		return
+	existing, existingErr := s.store.FindByIdempotency(r.Context(), cacheKey)
+	site, siteErr := s.resolveSiteConfig(r.Context(), req)
+	if existingErr == nil {
+		fresh := isFreshScrapeCache(existing, time.Now().UTC())
+		if siteErr == nil {
+			fresh = isFreshScrapeCacheForSite(existing, site, time.Now().UTC())
+		}
+		if fresh {
+			writeJSON(w, http.StatusOK, resultResponse(existing))
+			return
+		}
 	}
 	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+		return
+	}
+	if siteErr != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
 		return
 	}
-	site, err := s.resolveSiteConfig(r.Context(), req)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
-		return
-	}
 	site = s.applyCrawlLimits(site, req.Options)
-
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
 	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
@@ -232,24 +238,30 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
-	if existing, err := s.store.FindByIdempotency(r.Context(), cacheKey); err == nil && isFreshScrapeCache(existing, time.Now().UTC()) {
-		writeJSON(w, http.StatusOK, resultResponse(existing))
-		return
+	existing, existingErr := s.store.FindByIdempotency(r.Context(), cacheKey)
+	site, siteErr := s.resolveSiteConfig(r.Context(), req)
+	if existingErr == nil {
+		fresh := isFreshScrapeCache(existing, time.Now().UTC())
+		if siteErr == nil {
+			fresh = isFreshScrapeCacheForSite(existing, site, time.Now().UTC())
+		}
+		if fresh {
+			writeJSON(w, http.StatusOK, resultResponse(existing))
+			return
+		}
 	}
 	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+		return
+	}
+	if siteErr != nil {
+		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
 		return
 	}
-	site, err := s.resolveSiteConfig(r.Context(), req)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
-		return
-	}
 	site = s.applyCrawlLimits(site, req.Options)
-
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
 	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
@@ -1227,6 +1239,28 @@ func isFreshScrapeCache(result model.ScrapeResult, now time.Time) bool {
 		return false
 	}
 	return now.Sub(completedAt) < scrapeOnceCacheTTL
+}
+
+func isFreshScrapeCacheForSite(result model.ScrapeResult, site config.SiteConfig, now time.Time) bool {
+	if !isFreshScrapeCache(result, now) {
+		return false
+	}
+	// A configured stock selector means the dealer publishes a real stock
+	// number. Do not let an older VIN-fallback result mask a repaired template.
+	if strings.TrimSpace(site.DetailPage.StockSelector) == "" && strings.TrimSpace(site.ListPage.StockSelector) == "" {
+		return true
+	}
+	for _, item := range result.Items {
+		stock := strings.TrimSpace(item.StockID)
+		if stock == "" {
+			stock = strings.TrimSpace(item.Stock)
+		}
+		vin := strings.TrimSpace(item.VIN)
+		if stock == "" || (vin != "" && strings.EqualFold(stock, vin)) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) discoverSiteConfig(ctx context.Context, sourceURL, dealershipID string) (config.SiteConfig, error) {

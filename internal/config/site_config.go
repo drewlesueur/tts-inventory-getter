@@ -88,6 +88,22 @@ func NewLoader(dir string) Loader {
 }
 
 func (l Loader) LoadByName(name string) (SiteConfig, error) {
+	// YAML templates are operator-managed and may be repaired while the service
+	// is running. Prefer the current file on every resolution so an old in-memory
+	// discovery result cannot hide an updated permanent template.
+	if l.Dir != "" && strings.TrimSpace(name) != "" {
+		for _, ext := range []string{".yaml", ".yml"} {
+			path := filepath.Join(l.Dir, encodeCacheFilename(name)+ext)
+			if cfg, err := l.LoadByPath(path); err == nil {
+				l.Cache(name, cfg)
+				return cfg, nil
+			} else if !os.IsNotExist(err) {
+				// Preserve a previously valid in-memory template during an atomic
+				// editor write or temporary malformed-file window.
+				break
+			}
+		}
+	}
 	if l.cache != nil {
 		l.cache.mu.RLock()
 		cfg, ok := l.cache.m[name]

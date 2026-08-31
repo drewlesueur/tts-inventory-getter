@@ -76,10 +76,10 @@ func TestLiveStricklandConfig(t *testing.T) {
 	}
 	fetcher := NewHTTPFetcherWithTimeout(30 * time.Second)
 	svc := Service{
-		Fetcher:       fetcher,
-		DetailFetcher: HTMLDetailFetcher{Fetcher: fetcher},
-		Extractors:    []Extractor{LoopHTMLExtractor{}, DOMExtractor{}, NextDataExtractor{}, RegexExtractor{}},
-		Concurrency:   6,
+		Fetcher:            fetcher,
+		BatchDetailFetcher: NewBatchDetailFetcher(filepath.Join("..", "..", "scripts", "fetch_details.py"), "python3", nil, nil),
+		Extractors:         []Extractor{LoopHTMLExtractor{}, DOMExtractor{}, NextDataExtractor{}, RegexExtractor{}},
+		Concurrency:        6,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -87,7 +87,8 @@ func TestLiveStricklandConfig(t *testing.T) {
 	if len(res.Items) < 40 {
 		t.Fatalf("expected at least 40 live vehicles, got %d errors=%+v", len(res.Items), res.Errors)
 	}
-	missingStock, missingVIN, missingImages := 0, 0, 0
+	missingStock, missingVIN, missingImages, vinUsedAsStock := 0, 0, 0, 0
+	foundTES6 := false
 	for _, it := range res.Items {
 		if it.StockID == "" {
 			missingStock++
@@ -98,9 +99,15 @@ func TestLiveStricklandConfig(t *testing.T) {
 		if len(it.Images) == 0 {
 			missingImages++
 		}
+		if it.StockID != "" && it.StockID == it.VIN {
+			vinUsedAsStock++
+		}
+		if it.StockID == "TES6" && it.VIN == "7SAYGDEE7RF163837" {
+			foundTES6 = true
+		}
 	}
-	if missingStock != 0 || missingVIN != 0 || missingImages != 0 {
-		t.Fatalf("incomplete live inventory: items=%d missingStock=%d missingVIN=%d missingImages=%d errors=%+v", len(res.Items), missingStock, missingVIN, missingImages, res.Errors)
+	if missingStock != 0 || missingVIN != 0 || missingImages != 0 || vinUsedAsStock != 0 || !foundTES6 {
+		t.Fatalf("incomplete live inventory: items=%d missingStock=%d missingVIN=%d missingImages=%d vinUsedAsStock=%d foundTES6=%v errors=%+v", len(res.Items), missingStock, missingVIN, missingImages, vinUsedAsStock, foundTES6, res.Errors)
 	}
 	t.Logf("live scrape passed: items=%d errors=%d", len(res.Items), len(res.Errors))
 }
