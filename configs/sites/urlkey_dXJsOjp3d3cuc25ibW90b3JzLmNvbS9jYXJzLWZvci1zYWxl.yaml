@@ -1,0 +1,36 @@
+name: url::www.snbmotors.com/cars-for-sale
+baseUrl: https://www.snbmotors.com/cars-for-sale
+listPage:
+    waitSelectors:
+        - li.vehicle-snapshot
+    cardSelector: li.vehicle-snapshot
+    titleSelector: .vehicle-snapshot__title
+    urlSelector: a[href*='/details/']
+    stockSelector: '[data-stock], [data-stock-no], [data-vehicle-stock-no], [itemprop=''sku''], [class*=''stock'']'
+    priceSelector: .vehicle-snapshot__main-info, [class*='price']
+    mileageSelector: .mileage, [class*='mileage']
+    imageSelector: img
+    totalSelector: .inventory-results__count, [class*='results-count']
+    pagination:
+        type: page_number
+        nextSelector: .data-button-next-page
+        loadMoreSelector: ""
+        maxPages: 100
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - '[class*=''gallery''] img'
+        - img[data-src*='carsforsale.com']
+        - img[src*='carsforsale.com']
+    vinSelector: '[itemprop=''vehicleIdentificationNumber''], [data-vin]'
+    stockSelector: '[itemprop=''sku''], [data-stock], [class*=''stock'']'
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: CarsForSale dealer platform; uses PageNumber/PageSize pagination.
+    discoveredAt: "2026-09-01T00:00:00Z"
