@@ -180,7 +180,13 @@ func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 		t.Fatalf("expected 1 pending entry for %s with cache, got %+v", sourceURL, pendingResp.Pending)
 	}
 
-	// Fresh sync via /v1/scrape/sync clears it from pending.
+	// Simulate an unflagged cloud URL. A cache-only hybrid sync must flag it
+	// again so /v1/scrape/run routes directly to the fresh cache.
+	if err := st.UnflagProtectedURL(context.Background(), sourceURL); err != nil {
+		t.Fatalf("unflag protected url: %v", err)
+	}
+
+	// Fresh sync via /v1/scrape/sync flags it and clears it from pending.
 	syncBody, _ := json.Marshal(map[string]any{
 		"url":        sourceURL,
 		"skipUpsert": true,
@@ -204,6 +210,9 @@ func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 	}
 	if syncResp["accountId"] != "" || syncResp["dealershipId"] != "" || syncResp["upserted"] != false {
 		t.Fatalf("cache-only sync must remain URL-scoped, got %+v", syncResp)
+	}
+	if flagged, _ := st.IsProtectedURL(context.Background(), sourceURL); !flagged {
+		t.Fatal("cache-only sync must flag URL for cache-first scrape routing")
 	}
 	req = httptest.NewRequest(http.MethodGet, "/v1/scrape/pending-sync?maxAgeHours=12", nil)
 	req.Header.Set("X-Service-Key", "k")

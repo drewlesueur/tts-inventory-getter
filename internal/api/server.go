@@ -374,6 +374,19 @@ func (s *Server) handleScrapeSync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_STORE_FAILED", err.Error()))
 		return
 	}
+	// A cache-only sync is the hybrid-worker signal that this source cannot be
+	// scraped reliably from the cloud host. Persist that routing decision so
+	// /v1/scrape/run serves this cache immediately instead of timing out on a
+	// redundant live attempt. Protected flags are host-wide in shouldServeFromCache.
+	if req.SkipUpsert {
+		if err := s.store.FlagProtectedURL(r.Context(), store.ProtectedURL{
+			SourceURL: req.URL,
+			Reason:    "cache-only hybrid sync",
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("PROTECTED_URL_STORE_FAILED", err.Error()))
+			return
+		}
+	}
 	s.logger.Info("inventory synced to cache",
 		zap.String("url", req.URL),
 		zap.String("dealershipId", dealershipID),
