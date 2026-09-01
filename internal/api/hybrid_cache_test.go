@@ -214,6 +214,28 @@ func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 	if flagged, _ := st.IsProtectedURL(context.Background(), sourceURL); !flagged {
 		t.Fatal("cache-only sync must flag URL for cache-first scrape routing")
 	}
+
+	// The asynchronous scrape path used by /scrapeInventoryPage must use the
+	// same protected-domain cache routing as /v1/scrape/run.
+	onceBody, _ := json.Marshal(map[string]any{
+		"dealershipId": "any-dealer",
+		"sourceUrl":    sourceURL,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/v1/scrape/once", bytes.NewReader(onceBody))
+	req.Header.Set("X-Service-Key", "k")
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("protected scrape-once must return cache immediately, got %d body=%s", w.Code, w.Body.String())
+	}
+	var onceResp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &onceResp); err != nil {
+		t.Fatalf("bad scrape-once cache response: %v", err)
+	}
+	if onceResp["status"] != "ok" || onceResp["resultStatus"] != "success" || int(onceResp["totalItems"].(float64)) != 3 {
+		t.Fatalf("expected completed 3-item scrape-once cache response, got %+v", onceResp)
+	}
 	req = httptest.NewRequest(http.MethodGet, "/v1/scrape/pending-sync?maxAgeHours=12", nil)
 	req.Header.Set("X-Service-Key", "k")
 	w = httptest.NewRecorder()

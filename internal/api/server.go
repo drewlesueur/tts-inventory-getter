@@ -589,11 +589,11 @@ func (s *Server) isCacheOnly(rawURL string) bool {
 }
 
 // serveCacheOnlyScrapeOnce makes the scrape-once APIs honor the same synced
-// inventory cache as /v1/scrape/run. Cache-only URLs never fall through to a
-// live server scrape, even when the cached inventory is older than 24 hours;
-// the local-sync worker is responsible for refreshing it.
+// inventory cache as /v1/scrape/run. Static cache-only and dynamically flagged
+// protected domains never fall through to a live server scrape, even when the
+// cached inventory is older than 24 hours; the local-sync worker refreshes it.
 func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request, dealershipID, sourceURL, cacheKey string) bool {
-	if !s.isCacheOnly(sourceURL) {
+	if !s.shouldServeFromCache(r.Context(), sourceURL) {
 		return false
 	}
 	cached, err := s.cachedInventoryFor(r.Context(), sourceURL)
