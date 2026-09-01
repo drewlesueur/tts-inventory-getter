@@ -6,7 +6,6 @@
 # Usage:
 #   ./scripts/run-sync.sh                          # uses DEFAULT_URL below
 #   ./scripts/run-sync.sh <url>
-#   ./scripts/run-sync.sh <url> <dealershipId> <accountId>
 #   ./scripts/run-sync.sh https://www.jjsadobeauto.com/cars-for-sale
 #
 set -euo pipefail
@@ -16,10 +15,6 @@ CLOUD_URL="${CLOUD_URL:-http://54.244.74.98:8080}"
 SERVICE_KEY="${SERVICE_KEY:-replace-with-strong-key}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-300}"
 DEFAULT_URL="https://www.saiautosale.com/cars-for-sale"
-# Leave dealer/account empty so the cloud resolves the REAL account/dealer that
-# owns the URL (from TapToSign's page list). Only pass them to override.
-DEFAULT_DEALER=""
-DEFAULT_ACCOUNT=""
 LOCAL_PORT="8080"
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -28,8 +23,6 @@ cd "$ROOT_DIR"
 PYTHON_BIN="${PYTHON_BIN:-$ROOT_DIR/.venv/bin/python}"
 
 URL="${1:-$DEFAULT_URL}"
-DEALER="${2:-$DEFAULT_DEALER}"
-ACCOUNT="${3:-$DEFAULT_ACCOUNT}"
 LOCAL_URL="http://localhost:${LOCAL_PORT}"
 
 started_server=""
@@ -68,11 +61,11 @@ if [ ! -x "$PYTHON_BIN" ]; then
 fi
 
 # 2. Scrape locally + push to the cloud.
-echo "[run-sync] url=$URL dealer=$DEALER account=$ACCOUNT cloud=$CLOUD_URL"
+echo "[run-sync] url=$URL cloud=$CLOUD_URL mode=url-cache-only"
 CLOUD_URL="$CLOUD_URL" \
 LOCAL_URL="$LOCAL_URL" \
 SERVICE_KEY="$SERVICE_KEY" \
 TIMEOUT_SEC="$TIMEOUT_SEC" \
-  "$PYTHON_BIN" scripts/sync_to_cloud.py "$URL" "$DEALER" "$ACCOUNT"
+  "$PYTHON_BIN" scripts/sync_to_cloud.py "$URL"
 
 echo "[run-sync] done."

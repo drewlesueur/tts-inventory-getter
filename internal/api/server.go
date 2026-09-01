@@ -327,8 +327,8 @@ func (s *Server) handleSetDataDomeCookie(w http.ResponseWriter, r *http.Request)
 
 // handleScrapeSync accepts inventory scraped externally (e.g. on a local
 // residential IP), caches it keyed by URL, and upserts it to the owning
-// dealer/account. dealershipId/accountId are resolved from the inventory API
-// by matching the URL when not supplied.
+// dealer/account. Cache-only syncs remain URL-scoped and deliberately do not
+// resolve or persist account/dealership ownership.
 func (s *Server) handleScrapeSync(w http.ResponseWriter, r *http.Request) {
 	var req ScrapeSyncRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -349,7 +349,9 @@ func (s *Server) handleScrapeSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dealershipID, accountID := req.DealershipID, req.AccountID
-	if (dealershipID == "" || accountID == "") && s.invClient != nil {
+	if req.SkipUpsert {
+		dealershipID, accountID = "", ""
+	} else if (dealershipID == "" || accountID == "") && s.invClient != nil {
 		if d, a, ok := s.resolveDealerByURL(r.Context(), req.URL); ok {
 			if dealershipID == "" {
 				dealershipID = d

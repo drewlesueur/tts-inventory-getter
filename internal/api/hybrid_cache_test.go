@@ -198,6 +198,13 @@ func TestHybridScrapeRunFallsBackToCacheAndFlags(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("sync expected 200 got %d body=%s", w.Code, w.Body.String())
 	}
+	var syncResp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &syncResp); err != nil {
+		t.Fatalf("bad sync response json: %v", err)
+	}
+	if syncResp["accountId"] != "" || syncResp["dealershipId"] != "" || syncResp["upserted"] != false {
+		t.Fatalf("cache-only sync must remain URL-scoped, got %+v", syncResp)
+	}
 	req = httptest.NewRequest(http.MethodGet, "/v1/scrape/pending-sync?maxAgeHours=12", nil)
 	req.Header.Set("X-Service-Key", "k")
 	w = httptest.NewRecorder()

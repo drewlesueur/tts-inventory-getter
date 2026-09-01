@@ -2,12 +2,12 @@
 """
 sync_to_cloud.py — Run on your LOCAL (residential-IP) machine.
 
-Scrapes a URL via the LOCAL scraper service (which can reach DataDome sites),
-then pushes the result to the CLOUD service's /v1/scrape/sync endpoint. The cloud
-caches it and upserts to the owning dealer/account.
+Scrapes a URL via the LOCAL scraper service (which can reach protected sites),
+then pushes the result to the CLOUD service's URL-keyed inventory cache. It does
+not resolve or upsert an account/dealership.
 
 Usage:
-  python3 sync_to_cloud.py <scrape_url> [dealershipId] [accountId]
+  python3 sync_to_cloud.py <scrape_url>
 
 Env:
   LOCAL_URL     local scraper base url   (default http://localhost:8080)
@@ -29,11 +29,9 @@ TIMEOUT_SEC = int(os.environ.get("TIMEOUT_SEC", "300"))
 LOG_DIR = os.environ.get("LOG_DIR", ".")
 
 if len(sys.argv) < 2:
-    print("usage: sync_to_cloud.py <scrape_url> [dealershipId] [accountId]")
+    print("usage: sync_to_cloud.py <scrape_url>")
     sys.exit(1)
 scrape_url = sys.argv[1]
-dealership_id = sys.argv[2] if len(sys.argv) > 2 else ""
-account_id = sys.argv[3] if len(sys.argv) > 3 else ""
 
 if not CLOUD_URL or not SERVICE_KEY:
     print("CLOUD_URL and SERVICE_KEY env vars are required")
@@ -67,8 +65,6 @@ with open(log_path, "w") as f:
     json.dump(
         {
             "url": scrape_url,
-            "dealershipId": dealership_id,
-            "accountId": account_id,
             "scrapedAt": datetime.datetime.now().isoformat(),
             "itemCount": len(items),
             "errors": local.get("errors") or [],
@@ -83,12 +79,8 @@ if not items:
     print("[local] no items — aborting (errors:", local.get("errors"), ")")
     sys.exit(1)
 
-# 2. Push to the cloud cache + dealer upsert
+# 2. Push to the URL-keyed cloud cache only.
 print(f"[cloud] syncing to {CLOUD_URL} ...")
-payload = {"url": scrape_url, "items": items}
-if dealership_id:
-    payload["dealershipId"] = dealership_id
-if account_id:
-    payload["accountId"] = account_id
+payload = {"url": scrape_url, "items": items, "skipUpsert": True}
 result = post(CLOUD_URL, "/v1/scrape/sync", payload)
 print(f"[cloud] {json.dumps(result)}")
