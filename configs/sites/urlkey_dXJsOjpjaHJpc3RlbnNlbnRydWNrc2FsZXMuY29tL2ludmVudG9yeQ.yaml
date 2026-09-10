@@ -1,13 +1,23 @@
 name: url::christensentrucksales.com/inventory
+# iMotor / tilabs platform (Gatsby SPA, marker: data-imotor-site). The served
+# HTML is an empty shell — inventory comes from the Meilisearch-backed API:
+#   GET  /page-data/inventory/page-data.json   -> dealerId (106 here)
+#   POST /stock-search-proxy/multi-search      -> all stock in one call (limit 500)
+# The "imotor" keyword in discovery.notes below is load-bearing: fetchListHTML
+# checks for it and calls fetchIMotorInventoryHTML directly (internal/scrape/
+# imotor.go), which synthesizes the cards these selectors read.
+# 32 vehicles, no bot protection, no pagination — one API call covers the lot.
 baseUrl: https://christensentrucksales.com/inventory/
 listPage:
     waitSelectors:
         - .classStockV5CardWrapper
     cardSelector: .classStockV5CardWrapper
     titleSelector: h3
-    urlSelector: a[href*='/used-trucks/for']
-    stockSelector: ""
-    priceSelector: .classSv5CardPriceButton > span:first-child
+    urlSelector: a[href]
+    # Must match the id stamped by imotor.go, or the card copy and the
+    # __NEXT_DATA__ copy of each vehicle key differently and both survive.
+    stockSelector: .classStockCardStockNumber
+    priceSelector: .classSv5CardPriceButton span
     mileageSelector: '[data-testid$=''-card-feature-odometer-value'']'
     imageSelector: .classEmbCarouselItem1 img
     totalSelector: ""
@@ -15,18 +25,19 @@ listPage:
         type: ""
         nextSelector: ""
         loadMoreSelector: ""
-        maxPages: 0
-        infiniteScroll: true
-        scrollMaxAttempts: 30
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
         clickMaxAttempts: 0
 detailPage:
     imageSelectors: []
     vinSelector: ""
     stockSelector: ""
 regex:
-    stock: []
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    notes: iMotor/Gatsby Stock V5 inventory; vehicles load from the stock-search proxy after page render
-    discoveredAt: "2026-08-07T00:00:00Z"
+    notes: iMotor (tilabs) platform; inventory via stock-search-proxy API, expanded in Go.
+    discoveredAt: "2026-09-11T00:00:00Z"

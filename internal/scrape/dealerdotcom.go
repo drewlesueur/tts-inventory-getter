@@ -79,6 +79,13 @@ type ddcAttribute struct {
 	Value string `json:"value"`
 }
 
+// ddcText decodes the HTML entities DDC leaves in its JSON strings. Titles
+// arrive as "Ford F-150 Lariat&reg; TRUCK" — the value is JSON, so nothing
+// decodes it downstream and "&reg;" ships to the dealer as literal text.
+func ddcText(raw string) string {
+	return strings.TrimSpace(html.UnescapeString(raw))
+}
+
 func ddcAttr(lists [][]ddcAttribute, names ...string) string {
 	for _, name := range names {
 		for _, list := range lists {
@@ -128,9 +135,10 @@ func buildDealerDotComHTML(pageURL string, blob ddcStateBlob) string {
 	for _, v := range blob.WIS.Inventory {
 		attrs := [][]ddcAttribute{v.Attributes, v.HighlightAttributes, v.TrackingAttributes}
 
-		title := strings.TrimSpace(strings.Join(v.Title, " "))
+		vMake, vModel, vTrim := ddcText(v.Make), ddcText(v.Model), ddcText(v.Trim)
+		title := ddcText(strings.Join(v.Title, " "))
 		if title == "" {
-			title = strings.Join(nonEmptyStrings(itoaIfPositive(v.Year), v.Make, v.Model, v.Trim), " ")
+			title = strings.Join(nonEmptyStrings(itoaIfPositive(v.Year), vMake, vModel, vTrim), " ")
 		}
 		if title == "" {
 			continue
@@ -153,7 +161,7 @@ func buildDealerDotComHTML(pageURL string, blob ddcStateBlob) string {
 
 		vm := map[string]any{
 			"vin": structuredVINCandidate(v.VIN), "stock": v.StockNumber, "url": v.Link,
-			"title": title, "year": v.Year, "make": v.Make, "model": v.Model,
+			"title": title, "year": v.Year, "make": vMake, "model": vModel,
 			"price": price, "mileage": mileage, "photos": photos,
 			"body_type": v.BodyStyle, "fuel_type": v.FuelType,
 		}

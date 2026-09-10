@@ -32,6 +32,12 @@ var DefaultCacheOnlyURLs = []string{
 	// CarsForSale Blazor theme behind DataDome; needs the local residential-IP
 	// Brave path (no VPN).
 	"https://www.maxummotorsaz.com/cars-for-sale",
+	// Dealer.com. Unprotected, but a cloud live scrape takes 420s and fails every
+	// detail fetch, vs 6s locally — cache-only until the cloud is fixed.
+	"https://www.babbittford.com/all-inventory/index.htm",
+	// iMotor. The cloud lacks the card/__NEXT_DATA__ dedupe fix, so a live scrape
+	// there returns every truck twice (63 for a 32-truck lot).
+	"https://christensentrucksales.com/inventory",
 }
 
 // splitAndTrim splits a comma-separated env value into trimmed non-empty parts.

@@ -91,7 +91,9 @@ func fetchIMotorInventoryHTML(ctx context.Context, pageURL string) (string, erro
 		if vehicleType == "" {
 			vehicleType = "used"
 		}
-		detailURL := fmt.Sprintf("/%s-trucks/for sale/%s/%s/%d/%d/", slugIMotor(vehicleType), slugIMotor(hit.Make), slugIMotor(hit.Model), hit.Year, hit.ID)
+		// Live VDP path is /used-trucks/for-sale/international/durastar-4300/2017/2191287/
+		// — "for-sale" is hyphenated; a space here yielded %20 URLs that 404.
+		detailURL := fmt.Sprintf("/%s-trucks/for-sale/%s/%s/%d/%d/", slugIMotor(vehicleType), slugIMotor(hit.Make), slugIMotor(hit.Model), hit.Year, hit.ID)
 		vehicleMaps = append(vehicleMaps, map[string]any{
 			"stockid": strconv.Itoa(hit.ID), "url": detailURL, "title": title,
 			"year": hit.Year, "make": hit.Make, "model": hit.Model, "price": hit.Price,
@@ -100,6 +102,11 @@ func fetchIMotorInventoryHTML(ctx context.Context, pageURL string) (string, erro
 		cards.WriteString(`<div class="classStockV5CardWrapper">`)
 		cards.WriteString(`<a href="` + html.EscapeString(detailURL) + `"><h3>` + html.EscapeString(title) + `</h3></a>`)
 		cards.WriteString(`<meta itemprop="vehicleIdentificationNumber" content="` + html.EscapeString(validVINCandidate(hit.VIN)) + `">`)
+		// The same vehicle is also extracted from the __NEXT_DATA__ block below,
+		// where its identity is the iMotor id. Stamp that id on the card too, or
+		// the card copy falls back to keying on VIN and the two never merge —
+		// every vehicle then ships twice.
+		cards.WriteString(`<span class="classStockCardStockNumber">` + strconv.Itoa(hit.ID) + `</span>`)
 		cards.WriteString(`<button class="classSv5CardPriceButton"><span>$` + strconv.FormatFloat(hit.Price, 'f', 0, 64) + `</span></button>`)
 		cards.WriteString(`<span data-testid="` + strconv.Itoa(hit.ID) + `-card-feature-odometer-value">` + strconv.FormatFloat(hit.Odometer, 'f', 0, 64) + ` Mi</span>`)
 		if len(hit.Images) > 0 {
