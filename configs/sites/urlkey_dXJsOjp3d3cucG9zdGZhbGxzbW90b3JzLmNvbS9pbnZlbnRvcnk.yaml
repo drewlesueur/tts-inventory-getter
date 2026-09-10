@@ -1,0 +1,40 @@
+name: url::www.postfallsmotors.com/inventory
+# DealerCenter (DWS widgets) site behind Cloudflare, same platform and blocking
+# as www.signatureautoutah.com / www.mmcutah.com. The CF firewall hard-blocks
+# non-US and datacenter IPs with an HTTP-200 block page; fetches only succeed
+# through the Brave-CDP strategy in fetch_page.py (user's browser + US VPN
+# extension). 112 vehicles, rendered ?page_no=N links, ~25 per page.
+baseUrl: https://www.postfallsmotors.com/inventory/
+listPage:
+    waitSelectors:
+        - .dws-vehicle-listing-item
+    cardSelector: .list-group-item.dws-vehicle-listing-item
+    titleSelector: ""
+    urlSelector: a[href*='/inventory/']
+    stockSelector: ""
+    priceSelector: ""
+    mileageSelector: .dws-vehicle-field-mileage .dws-vehicle-listing-item-field-value
+    imageSelector: ""
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # Cards carry every gate field; VDPs are behind the same CF block.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*(?:number|#)?[:\-]?\s*([0-9a-z\-]{3,10})
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCenter DWS widget; fetch requires US IP (Brave CDP via VPN extension)
+    discoveredAt: "2026-09-10T00:00:00Z"

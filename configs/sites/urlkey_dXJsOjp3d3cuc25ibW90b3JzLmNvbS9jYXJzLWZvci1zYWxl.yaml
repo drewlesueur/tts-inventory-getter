@@ -15,7 +15,7 @@ listPage:
         type: page_number
         nextSelector: .data-button-next-page
         loadMoreSelector: ""
-        maxPages: 100
+        maxPages: 5
         infiniteScroll: false
         scrollMaxAttempts: 0
         clickMaxAttempts: 0

@@ -573,10 +573,11 @@ func (s *Server) resolveDealerByURL(ctx context.Context, sourceURL string) (deal
 // isCacheOnly reports whether a URL must be served from cache (never live-scraped).
 func (s *Server) isCacheOnly(rawURL string) bool {
 	want := store.NormalizeURLKey(rawURL)
-	// These DataDome-protected dealers are intentionally scraped by the local
-	// residential-IP worker. The server must never attempt a live pull for them.
-	for _, host := range []string{"jjsadobeauto.com", "saiautosale.com"} {
-		if hostnameOf(rawURL) == host {
+	// These protected dealers are intentionally scraped by the local worker.
+	// Keep the canonical URLs in one list so cache routing and pending-sync use
+	// the same source of truth after a fresh cloud deployment.
+	for _, u := range config.DefaultCacheOnlyURLs {
+		if hostnameOf(rawURL) == hostnameOf(u) {
 			return true
 		}
 	}

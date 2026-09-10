@@ -426,6 +426,8 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				// hydrated page and short-circuit the walk with a dozen blanks.
 				h = expandSpaceAutoInventory(ctx, pageURL, h)
 				h = expandDealerDotComInventory(ctx, pageURL, h)
+				h = s.expandTeamVelocityInventory(ctx, pageURL, h)
+				h = s.expandDealerOnInventory(ctx, pageURL, h)
 				cardCount := countCards(h, site.ListPage.CardSelector)
 				// A successful HTTP response can still be only the server-rendered shell
 				// for client-side inventory apps. If a card selector is configured but
@@ -474,6 +476,8 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		renderErr = nil
 		source = "browser"
 		html = expandIMotorInventory(ctx, pageURL, html)
+		html = s.expandTeamVelocityInventory(ctx, pageURL, html)
+		html = s.expandDealerOnInventory(ctx, pageURL, html)
 		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
 			continue
 		}
@@ -764,6 +768,13 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		seen[next] = struct{}{}
 		out = append(out, next)
 	}
+	for _, next := range extractBlazorPagingPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	for _, next := range extractNumberedPageURLs(pageURL, doc) {
 		if _, ok := seen[next]; ok {
 			continue
@@ -834,6 +845,56 @@ func extractPageNumberParamURLs(pageURL string, doc *goquery.Document) []string 
 		if q.Get("PageSize") == "" {
 			q.Set("PageSize", "100")
 		}
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// "Showing 1 - 24 of 48 Results" on the newer CarsForSale Blazor theme
+// (maxummotorsaz.com). goquery .Text() may glue siblings, so no \b anchors.
+var blazorShowingRe = regexp.MustCompile(`(?i)showing\s*(\d+)\s*-\s*(\d+)\s*of\s*(\d+)`)
+
+// extractBlazorPagingPageURLs handles the newer CarsForSale Blazor theme whose
+// pager (div[data-role='pager']) renders numbered items with NO hrefs — clicks
+// navigate to GET ?Paging.Page=N, which the server honors directly. Synthesize
+// every remaining page from the "Showing X - Y of Z Results" summary.
+func extractBlazorPagingPageURLs(pageURL string, doc *goquery.Document) []string {
+	pager := doc.Find("[data-role='pager']")
+	if pager.Length() == 0 {
+		return nil
+	}
+	// Stand down when the pager has real numbered links — the generic walkers
+	// already cover those.
+	crawlable := 0
+	pager.Find("a[href]").Each(func(_ int, s *goquery.Selection) {
+		if parsePositiveInt(strings.TrimSpace(s.Text())) > 0 {
+			crawlable++
+		}
+	})
+	if crawlable >= 2 {
+		return nil
+	}
+	m := blazorShowingRe.FindStringSubmatch(pager.First().Text())
+	if len(m) < 4 {
+		return nil
+	}
+	first, last, total := parsePositiveInt(m[1]), parsePositiveInt(m[2]), parsePositiveInt(m[3])
+	pageSize := last - first + 1
+	if first <= 0 || pageSize <= 0 || total <= last {
+		return nil
+	}
+	cur := (first-1)/pageSize + 1
+	totalPages := (total + pageSize - 1) / pageSize
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, totalPages-cur)
+	for p := cur + 1; p <= totalPages; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("Paging.Page", strconv.Itoa(p))
 		next.RawQuery = q.Encode()
 		out = append(out, next.String())
 	}

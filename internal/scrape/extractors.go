@@ -149,7 +149,7 @@ func scoreListingURL(raw string) int {
 		return -100
 	}
 	score := 0
-	if strings.Contains(l, "/pre-owned-cars/detail/") || strings.Contains(l, "/vehicle-details/") || strings.Contains(l, "/inventory/") {
+	if strings.Contains(l, "/pre-owned-cars/detail/") || strings.Contains(l, "/vehicle-details/") || strings.Contains(l, "/inventory/") || strings.Contains(l, "/viewdetails/") {
 		score += 10
 	}
 	if strings.HasPrefix(l, "/") {

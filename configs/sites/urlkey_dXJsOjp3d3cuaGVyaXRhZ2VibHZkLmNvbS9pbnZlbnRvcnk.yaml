@@ -1,0 +1,43 @@
+name: url::www.heritageblvd.com/inventory
+# DealerCarSearch platform, newer i11r_* markup variant (fiuzamotors uses the
+# older i08r_*). No bot protection — plain curl_cffi works from any IP, so the
+# cloud can scrape this once deployed. VIN, stock, mileage are all on the list
+# card (label/value in .i11r_opt* rows). Prices are hidden behind "Get ePrice"
+# on the list; detail fetching fills price from the VDP when published.
+# Pagination: DealerCarSearch "Page: X of Y" pager — extractDealerCarSearchPageURLs
+# synthesizes ?page=N (?PageSize=200 also returns everything at once).
+baseUrl: https://www.heritageblvd.com/inventory
+listPage:
+    waitSelectors:
+        - .i11r-vehicle
+    cardSelector: .i11r-vehicle
+    titleSelector: .i11r_vehicleTitle
+    urlSelector: a[href*='/vdp/']
+    stockSelector: .i11r_optStock
+    priceSelector: .i11r_priceWrap [class*='price']
+    mileageSelector: .i11r_optMileage
+    imageSelector: .i11r_image img
+    totalSelector: .pager-summary
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 10
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src*='dealercarsearch']
+        - img[src*='dealercarsearch']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCarSearch i11r theme; no protection, cloud-scrapeable after deploy.
+    discoveredAt: "2026-09-11T00:00:00Z"

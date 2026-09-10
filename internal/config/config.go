@@ -8,6 +8,32 @@ import (
 	"github.com/spf13/viper"
 )
 
+// DefaultCacheOnlyURLs are protected inventory sources refreshed by the local
+// hybrid worker and served from the cloud's URL-keyed cache.
+var DefaultCacheOnlyURLs = []string{
+	"https://www.jjsadobeauto.com/cars-for-sale",
+	"https://www.saiautosale.com/cars-for-sale",
+	"https://www.sandiegoautosolutions.com/cars-for-sale",
+	"https://www.signatureautoutah.com/inventory/",
+	"https://www.snbmotors.com/cars-for-sale",
+	"https://www.usedvwaudi.com/search-used-cars-near-phoenix",
+	// Team Velocity landing page; served from cache, refreshed by the local
+	// worker (the expander in teamvelocity.go handles the local live scrape).
+	"https://www.nelsonmazdacoolsprings.com/inventory",
+	// DealerCenter behind Cloudflare; blocks non-US and datacenter IPs, so the
+	// cloud can never scrape it live — local Brave+VPN worker refreshes it.
+	"https://www.postfallsmotors.com/inventory",
+	// DealerOn Cosmos SPA; needs the dealeron.go expander + working curl_cffi,
+	// which the deployed cloud binary lacks — refreshed by the local worker.
+	"https://www.markmillersubarusouthtowne.com/new-inventory",
+	// DealerCenter behind Cloudflare (US-only firewall, datacenter IPs blocked);
+	// cloud can never scrape it live — local Brave+VPN worker refreshes it.
+	"https://www.automotiveambitions.com/inventory",
+	// CarsForSale Blazor theme behind DataDome; needs the local residential-IP
+	// Brave path (no VPN).
+	"https://www.maxummotorsaz.com/cars-for-sale",
+}
+
 // splitAndTrim splits a comma-separated env value into trimmed non-empty parts.
 func splitAndTrim(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
@@ -165,4 +191,5 @@ func setDefaults() {
 	viper.SetDefault("DEFAULT_MAX_SCROLL_ATTEMPTS", 8)
 	viper.SetDefault("DEFAULT_MAX_LOAD_MORE_CLICKS", 20)
 	viper.SetDefault("DEFAULT_MAX_ITEMS", 0)
+	viper.SetDefault("CACHE_ONLY_URLS", strings.Join(DefaultCacheOnlyURLs, ","))
 }

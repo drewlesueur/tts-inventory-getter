@@ -31,7 +31,9 @@ var (
 )
 
 // ddcMaxPages bounds the synthesized page walk regardless of a bogus totalCount.
-const ddcMaxPages = 60
+// axioauto.com legitimately runs 2027 vehicles at pageSize 24 (~85 pages), so
+// the bound sits above that while still catching a nonsense totalCount.
+const ddcMaxPages = 120
 
 type ddcStateBlob struct {
 	WIS struct {
@@ -150,7 +152,7 @@ func buildDealerDotComHTML(pageURL string, blob ddcStateBlob) string {
 		}
 
 		vm := map[string]any{
-			"vin": validVINCandidate(v.VIN), "stock": v.StockNumber, "url": v.Link,
+			"vin": structuredVINCandidate(v.VIN), "stock": v.StockNumber, "url": v.Link,
 			"title": title, "year": v.Year, "make": v.Make, "model": v.Model,
 			"price": price, "mileage": mileage, "photos": photos,
 			"body_type": v.BodyStyle, "fuel_type": v.FuelType,
@@ -168,7 +170,7 @@ func buildDealerDotComHTML(pageURL string, blob ddcStateBlob) string {
 		b.WriteString(`<li class="box box-border vehicle-card vehicle-card-detailed">`)
 		b.WriteString(`<h2 class="vehicle-card-title"><a href="` + html.EscapeString(v.Link) + `">`)
 		b.WriteString(`<span>` + html.EscapeString(title) + `</span></a></h2>`)
-		b.WriteString(`<meta itemprop="vehicleIdentificationNumber" content="` + html.EscapeString(validVINCandidate(v.VIN)) + `">`)
+		b.WriteString(`<meta itemprop="vehicleIdentificationNumber" content="` + html.EscapeString(structuredVINCandidate(v.VIN)) + `">`)
 		if price != "" {
 			b.WriteString(`<span class="price-value">` + html.EscapeString(price) + `</span>`)
 		}

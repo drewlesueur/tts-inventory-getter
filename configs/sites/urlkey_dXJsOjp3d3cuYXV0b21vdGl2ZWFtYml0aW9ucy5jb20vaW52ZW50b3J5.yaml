@@ -1,0 +1,42 @@
+name: url::www.automotiveambitions.com/inventory
+# DealerCenter widget on WordPress, behind the same Cloudflare US-only firewall
+# as signatureautoutah/postfallsmotors — fetch works only via Brave CDP + US VPN.
+# Different theme than the dws-vehicle-listing-item sites: cards are
+# div.vehicle-container (VIN only in data-vehicle-id="vehicle-id-<VIN>"),
+# ~13 per page over elided ?page_no=N links (148 cars), ?pager is ignored.
+# No VIN/mileage text on the card, so detail fetching stays ON to fill them
+# from the VDP (also behind CF — the detail fetcher's Brave strategy handles it).
+# Price text glues "*Includes Dealer Fees" — priceSelector left empty so
+# extractBestPriceText takes the leading amount instead.
+baseUrl: https://www.automotiveambitions.com/inventory/
+listPage:
+    waitSelectors:
+        - .vehicle-container
+    cardSelector: div.vehicle-container
+    titleSelector: a.vehicle-title
+    urlSelector: a.vehicle-title
+    stockSelector: .vehicle-field-stocknumber .vehicle-info-value
+    priceSelector: ""
+    mileageSelector: ""
+    imageSelector: img.vehicle-image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 20
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCenter (WordPress theme); fetch requires US IP (Brave CDP via VPN extension)
+    discoveredAt: "2026-09-10T00:00:00Z"

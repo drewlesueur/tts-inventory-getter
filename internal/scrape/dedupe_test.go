@@ -147,6 +147,30 @@ func TestDedupe_StillMergesOnIdenticalImageFile(t *testing.T) {
 
 // A bogus stock value shared across a page (an empty "Stock #" cell that
 // captured the model year) must not merge distinct vehicles.
+// Identity is stock plus VIN: one physical car cross-listed at two rooftops of
+// a dealer group carries two stock numbers and two prices, and each listing is
+// sold separately, so both must survive. axioauto.com has 12 of these.
+func TestDedupe_KeepsSameVINUnderDifferentStockNumbers(t *testing.T) {
+	items := []model.InventoryItem{
+		{StockID: "C0037", VIN: "1GCVKNEH7HZ312819", Title: "2017 Chevrolet Silverado 1500", Price: "$21,077", Mileage: "36,300"},
+		{StockID: "X0037", VIN: "1GCVKNEH7HZ312819", Title: "2017 Chevrolet Silverado 1500", Price: "$19,577", Mileage: "36,300"},
+	}
+	out := Dedupe(items)
+	if len(out) != 2 {
+		t.Fatalf("expected both rooftop listings kept, got %d: %+v", len(out), out)
+	}
+	prices := map[string]bool{out[0].Price: true, out[1].Price: true}
+	if !prices["$21,077"] || !prices["$19,577"] {
+		t.Fatalf("expected each listing to keep its own price, got %+v", out)
+	}
+	// A partial copy of one listing (no VIN yet) still folds into it rather than
+	// becoming a third row.
+	withPartial := append(items, model.InventoryItem{StockID: "C0037", Title: "2017 Chevrolet Silverado 1500", Color: "White"})
+	if merged := Dedupe(withPartial); len(merged) != 2 {
+		t.Fatalf("partial row should merge on stock, got %d: %+v", len(merged), merged)
+	}
+}
+
 func TestDedupe_NeverMergesDifferentVINs(t *testing.T) {
 	items := []model.InventoryItem{
 		{Title: "2018 Honda CR-V", StockID: "2018", VIN: "7FARW2H52LE004353", Price: "$14,991"},

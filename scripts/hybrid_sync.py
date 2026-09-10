@@ -19,7 +19,7 @@ Env:
   SERVICE_KEY      X-Service-Key for both   (required)
   TIMEOUT_SEC      per-scrape timeout       (default 1200)
   MAX_AGE_HOURS    cache freshness window   (default 12)
-  SYNC_SKIP_UPSERT set to 1 to only cache on the cloud, skipping dealer upsert
+  All pushes are URL-cache-only; account/dealership upsert is never performed.
 """
 import os
 import sys
@@ -32,7 +32,6 @@ CLOUD_URL = os.environ.get("CLOUD_URL", "").rstrip("/")
 SERVICE_KEY = os.environ.get("SERVICE_KEY", "")
 TIMEOUT_SEC = int(os.environ.get("TIMEOUT_SEC", "1200"))
 MAX_AGE_HOURS = int(os.environ.get("MAX_AGE_HOURS", "12"))
-SKIP_UPSERT = os.environ.get("SYNC_SKIP_UPSERT", "") in ("1", "true", "yes")
 
 if not CLOUD_URL or not SERVICE_KEY:
     print("CLOUD_URL and SERVICE_KEY env vars are required")
@@ -50,9 +49,27 @@ def call(base, path, payload=None, method=None, timeout=60):
         return json.loads(resp.read())
 
 
+# US-geo-blocked hosts need the VPN browser; scrape them last so the
+# non-VPN sites are refreshed even if the VPN path is down.
+VPN_HOSTS = (
+    "sandiegoautosolutions.com",
+    "signatureautoutah.com",
+    "peakautosalesco.com",
+    "rightchoiceautomotive.com",
+    "mmcutah.com",
+    "postfallsmotors.com",
+    "automotiveambitions.com",
+)
+
+
+def needs_vpn(url):
+    return any(h in url for h in VPN_HOSTS)
+
+
 def one_pass():
     pending = call(CLOUD_URL, f"/v1/scrape/pending-sync?maxAgeHours={MAX_AGE_HOURS}")
     urls = [p["url"] for p in pending.get("pending", [])]
+    urls.sort(key=needs_vpn)  # VPN-dependent sites last
     if not urls:
         print("[hybrid] nothing pending — all caches fresh")
         return
@@ -79,9 +96,7 @@ def one_pass():
             if prev > 0 and len(items) < prev * 0.6:
                 print(f"[hybrid] SKIP {u}: scrape returned {len(items)} but cache has {prev} — looks partial, not overwriting")
                 continue
-            payload = {"url": u, "items": items}
-            if SKIP_UPSERT:
-                payload["skipUpsert"] = True
+            payload = {"url": u, "items": items, "skipUpsert": True}
             sync = call(CLOUD_URL, "/v1/scrape/sync", payload, timeout=120)
             print(f"[hybrid] synced {u}: cached={sync.get('cachedItems')} upserted={sync.get('upserted')} dealership={sync.get('dealershipId')}")
         except Exception as e:

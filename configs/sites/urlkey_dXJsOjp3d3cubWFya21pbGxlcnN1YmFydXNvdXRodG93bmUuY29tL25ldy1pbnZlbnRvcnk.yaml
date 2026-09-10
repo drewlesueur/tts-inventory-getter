@@ -1,0 +1,41 @@
+name: url::www.markmillersubarusouthtowne.com/new-inventory
+# DealerOn "Cosmos" SPA — the SRP HTML has only skeleton cards; inventory comes
+# from the paged JSON API (dealerId/pageId published in dealeron_tagging_data).
+# expandDealerOnInventory (dealeron.go) walks the API and synthesizes
+# .dealeron-api-card elements, which these selectors read. curl_cffi fetches the
+# page and API from any IP; no browser needed.
+#
+# New cars have VehicleInternetPrice 0 → price left blank on the card; detail
+# fetching (default-on) fills price/specs from the VDP.
+baseUrl: https://www.markmillersubarusouthtowne.com/new-inventory
+listPage:
+    waitSelectors:
+        - .dealeron-api-card
+    cardSelector: .dealeron-api-card
+    titleSelector: .dealeron-api-title
+    urlSelector: a.dealeron-api-url
+    stockSelector: .dealeron-api-stock
+    priceSelector: .dealeron-api-price
+    mileageSelector: .dealeron-api-mileage
+    imageSelector: img.dealeron-api-image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerOn Cosmos SPA; inventory via srp/vehicles JSON API, expanded in Go (dealeron.go).
+    discoveredAt: "2026-09-10T00:00:00Z"

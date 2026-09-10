@@ -1,0 +1,43 @@
+name: url::www.nelsonmazdacoolsprings.com/inventory
+# Team Velocity / secureoffersites platform, Mazda OEM theme. The bare
+# /inventory path is a landing page with ~11 featured cars only; the real
+# inventory lives on /inventory/new and /inventory/used (server-rendered,
+# ?page=N, 30/page). expandTeamVelocityInventory (teamvelocity.go) detects the
+# landing page and merges both SRPs' cards, so this config's selectors run
+# against that merged HTML — pagination stays off.
+#
+# Cards carry VIN (#copy_vin + /viewdetails/<vin>/ slug), stock
+# ("#T0102169A" — normalizer strips the #), price and mileage inline.
+# curl_cffi passes the bot check from any IP; plain HTTP clients get 403.
+baseUrl: https://www.nelsonmazdacoolsprings.com/inventory
+listPage:
+    waitSelectors:
+        - '[class*=''inventory-car-parent-box'']'
+    cardSelector: '[class*=''inventory-car-parent-box'']'
+    titleSelector: .oem-vehiclebox-title h2
+    urlSelector: a[href*='/viewdetails/']
+    stockSelector: .stock-number-field
+    priceSelector: '[id$=''-your-price'']'
+    mileageSelector: ""
+    imageSelector: .vehicle-box-image img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: '#copy_vin'
+    stockSelector: '#copy_stock'
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Team Velocity platform (secureoffersites.com); landing page expanded to new+used SRPs in Go.
+    discoveredAt: "2026-09-10T00:00:00Z"

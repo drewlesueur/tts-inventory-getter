@@ -1,0 +1,41 @@
+name: url::www.axioauto.com/all-inventory/index.htm
+# Dealer.com (DDC) — same platform as kianmotors; records come from the
+# DDC.WS.state['ws-inv-data'] blob via expandDealerDotComInventory, paged with
+# ?start=N. BIG store: 2027 vehicles at pageSize 24 (~85 pages), which is why
+# a config-less scrape (default 20-page cap) stopped at ~716 vehicles —
+# maxPages below and ddcMaxPages (raised to 120) cover the full walk.
+# Cards from the expander carry VIN/stock/price/mileage/photo, so detail
+# fetching is skipped — 2027 VDP requests would add nothing but hours.
+baseUrl: https://www.axioauto.com/all-inventory/index.htm
+listPage:
+    waitSelectors:
+        - li.vehicle-card-detailed .price-value
+    cardSelector: li.vehicle-card-detailed
+    titleSelector: .vehicle-card-title
+    urlSelector: a[href*='/used/'], a[href*='/certified/'], a[href*='/new/']
+    stockSelector: .stockNumber
+    priceSelector: .final-price .price-value, .price-value
+    mileageSelector: .ddc-odometer, li.odometer
+    imageSelector: img.ddc-photo, .img-container img
+    totalSelector: .ddc-result-count
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 90
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Dealer.com DDC; 2027 vehicles / 85 pages; cloud-scrapeable after deploy (needs this config + ddcMaxPages>=85 binary).
+    discoveredAt: "2026-09-11T00:00:00Z"

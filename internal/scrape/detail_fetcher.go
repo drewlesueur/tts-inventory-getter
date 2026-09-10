@@ -156,7 +156,9 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 	if item.StockID == "" {
 		doc.Find("li, div, tr, p, span, dt, dd").EachWithBreak(func(_ int, s *goquery.Selection) bool {
 			label := strings.ToUpper(clean(s.Text()))
-			if label == "STOCK" || strings.Contains(label, "STOCK #") || strings.Contains(label, "STOCK:") {
+			// "STOCK#" (no space) is how the CarsForSale Blazor theme renders the
+			// label ("Stock#" / wrapper text "Stock# P971").
+			if label == "STOCK" || strings.Contains(label, "STOCK #") || strings.Contains(label, "STOCK:") || strings.HasPrefix(label, "STOCK#") {
 				candidate := clean(s.Parent().Text())
 				if candidate == "" {
 					candidate = clean(s.Next().Text())
@@ -223,6 +225,35 @@ func findVINInText(text string) string {
 		}
 	}
 	return ""
+}
+
+// structuredVINCandidate accepts a VIN from a field a platform explicitly
+// labels as the VIN (a JSON "vin" key, an itemprop), where there is no risk of
+// having matched some other number in free text. It therefore allows the short
+// pre-1981 VINs that validVINCandidate rejects — a 1978 Corvette carries
+// "1Z87L8S906031" (13 chars), and dropping it left the car with no VIN at all.
+func structuredVINCandidate(raw string) string {
+	if vin := validVINCandidate(raw); vin != "" {
+		return vin
+	}
+	vin := strings.ToUpper(strings.TrimSpace(raw))
+	if len(vin) < 11 || len(vin) > 16 {
+		return ""
+	}
+	hasDigit := false
+	for _, r := range vin {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r >= 'A' && r <= 'Z':
+		default:
+			return ""
+		}
+	}
+	if !hasDigit {
+		return ""
+	}
+	return vin
 }
 
 func validVINCandidate(raw string) string {

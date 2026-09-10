@@ -1,15 +1,17 @@
 name: url::www.usedvwaudi.com/search-used-cars-near-phoenix
 baseUrl: https://www.usedvwaudi.com/search-used-cars-near-phoenix
 listPage:
-    waitSelectors: []
-    cardSelector: li
-    titleSelector: h2, h3
-    urlSelector: a
-    stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
-    priceSelector: .price, [class*='price']
-    mileageSelector: .mileage, [class*='mileage']
+    waitSelectors:
+        - .vehicle-list a.vehicle
+    cardSelector: .vehicle-list > div
+    titleSelector: .vehicle-header
+    urlSelector: a.vehicle[href*='/inventory/']
+    stockSelector: .stock span
+    priceSelector: .vehicle-price-condensed .final
+    mileageSelector: .vehicle-specs
     imageSelector: img
-    totalSelector: ""
+    totalSelector: .matches strong
+    maxItems: 600
     pagination:
         type: ""
         nextSelector: ""
@@ -25,6 +27,7 @@ detailPage:
         - img[src*='vehicle']
     vinSelector: ""
     stockSelector: ""
+    skip: true
 regex:
     stock:
         - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
