@@ -1,0 +1,45 @@
+name: url::www.utahusedcarfactory.com/inventory
+# Dealr (dealrcloud.com / dealrimages.com) platform — server-rendered, no bot
+# protection, curl_cffi works from any IP. 251 vehicles, 50 per page, 6 pages.
+#
+# Pagination: the pager is <ul class="pagination" dealr-pagination="6"> whose
+# numbers are <a dealr-pagination-target="N"> with NO href; the server does
+# honor ?page=N, which extractDealrPageURLs synthesizes from that attribute.
+# (?p, ?pg, ?offset, ?start are all silently ignored and re-serve page 1.)
+#
+# Card details are label/value <li> pairs, so mileage/stock are selected with
+# :contains() on the key rather than a positional nth-child. The VIN is only on
+# the CarGurus badge (span[data-cg-vin]) — read by the card-attribute fallback
+# in extractors.go, which saves a detail fetch per vehicle.
+baseUrl: https://www.utahusedcarfactory.com/inventory
+listPage:
+    waitSelectors:
+        - .dealr-inventory-list__vehicle
+    cardSelector: .dealr-inventory-list__vehicle
+    titleSelector: .dealr-inventory-vehicle__info__header__container__title h2
+    urlSelector: a.dealr-inventory-list__vehicle__photo-container, a.dealr-inventory-vehicle__info__header
+    stockSelector: .dealr-inventory-vehicle__info__details__item:contains("Stock") .dealr-inventory-vehicle__info__details__item__value
+    priceSelector: .dealr-inventory-vehicle__info__header__price
+    mileageSelector: .dealr-inventory-vehicle__info__details__item:contains("Mileage") .dealr-inventory-vehicle__info__details__item__value
+    imageSelector: .dealr-inventory-list__vehicle__photo-container__photo img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 12
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Dealr (dealrcloud) platform; ?page=N synthesized from the dealr-pagination attribute.
+    discoveredAt: "2026-09-11T00:00:00Z"

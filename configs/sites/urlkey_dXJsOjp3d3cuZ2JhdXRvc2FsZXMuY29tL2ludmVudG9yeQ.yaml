@@ -1,0 +1,45 @@
+name: url::www.gbautosales.com/inventory
+# DealerCarSearch, i10r_* theme — a third markup variant of the platform
+# (fiuzamotors uses i08r_*, heritageblvd uses i11r_*). Card root is
+# .invMainCell; the i10r_* classes are its children.
+# No bot protection: plain curl_cffi works from any IP, whole lot is one page
+# ("Page: 1 of 1 (18 vehicles)"). If the lot outgrows a page, the pager is the
+# usual JS changePage() with a .pager-summary, which
+# extractDealerCarSearchPageURLs already turns into ?page=N.
+# VIN, stock and mileage are all label/value <p> rows on the card, so no VDP
+# fetching is needed.
+baseUrl: https://www.gbautosales.com/inventory
+listPage:
+    waitSelectors:
+        - .invMainCell
+    cardSelector: .invMainCell
+    titleSelector: .i10r_vehicleTitle
+    urlSelector: a[href*='/vdp/']
+    stockSelector: .i10r_optStock
+    priceSelector: .i10r_priceWrap .price-2, .i10r_priceWrap [class*='price-']
+    mileageSelector: .i10r_optMileage
+    imageSelector: img.i10r_mainImg
+    totalSelector: .pager-summary
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 10
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - .gallery img
+        - img[data-src*='dealercarsearch']
+        - img[src*='dealercarsearch']
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCarSearch i10r theme; unprotected, single page, cloud-scrapeable after deploy.
+    discoveredAt: "2026-09-11T00:00:00Z"

@@ -1,0 +1,51 @@
+name: url::www.bobbycombsrvcenter.com/inventory
+# RV dealer on a custom "theme-builder" platform (ridecdn.com photos), fully
+# server-rendered, no bot protection — plain curl_cffi from any IP.
+# 20 units per page over real ?page=N links (24 pages); the pager elides the
+# middle (1-9 … 23 24) and extractNumberedPageURLs fills the gap.
+#
+# RV listings, so the usual car fields differ: there is NO VIN anywhere on the
+# site (list or VDP) and no mileage — units are identified by stock number.
+# The VDP adds only brochure specs, so detail fetching is skipped; without that
+# this would be ~480 pointless requests.
+#
+# Card photos are inline `style="background-image:url(...)"` divs — the <img>
+# is an empty lazy placeholder — which pickCardImage's background fallback
+# already handles.
+baseUrl: https://www.bobbycombsrvcenter.com/inventory
+listPage:
+    waitSelectors:
+        - .inv-custom
+    cardSelector: .inv-custom
+    titleSelector: a.unit-title
+    urlSelector: a.unit-title
+    stockSelector: .unit-stock span
+    # Sale Price only. A comma-selector including .urv-msrp would return MSRP,
+    # since goquery yields matches in document order and MSRP is listed first
+    # ("MSRP $39,794 / Savings $10,804 / Sale Price $28,990"). When a unit has
+    # no sale price, extractBestPriceText falls back to the first amount (MSRP).
+    priceSelector: .urv-sale span
+    mileageSelector: ""
+    imageSelector: img.overlay-img, img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 30
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*(?:number|#)?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: RV dealer, theme-builder platform; stock-only identity, no VIN/mileage published.
+    discoveredAt: "2026-09-11T00:00:00Z"

@@ -173,9 +173,18 @@ def try_brave_cdp(url: str):
                 page.wait_for_timeout(5000)
                 html = page.content()
                 status = resp.status if resp else 0
+                # Cloudflare answers the navigation with 403 and its "Just a
+                # moment..." interstitial, then swaps in the real page a few
+                # seconds later — the navigation's status stays 403 either way.
+                # So wait for the challenge to clear and judge by content.
+                for _ in range(10):
+                    if not is_blocked(html):
+                        break
+                    page.wait_for_timeout(2500)
+                    html = page.content()
             finally:
                 page.close()
-        if status >= 400 or is_blocked(html):
+        if is_blocked(html) or (status >= 400 and status != 403):
             print(f"[brave] blocked/error status={status}", file=sys.stderr)
             return None, None
         print("[brave] ✓ success", file=sys.stderr)

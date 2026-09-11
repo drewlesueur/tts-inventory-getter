@@ -428,6 +428,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				h = expandDealerDotComInventory(ctx, pageURL, h)
 				h = s.expandTeamVelocityInventory(ctx, pageURL, h)
 				h = s.expandDealerOnInventory(ctx, pageURL, h)
+				h = s.expandDealerSyncInventory(ctx, pageURL, h)
 				cardCount := countCards(h, site.ListPage.CardSelector)
 				// A successful HTTP response can still be only the server-rendered shell
 				// for client-side inventory apps. If a card selector is configured but
@@ -478,6 +479,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		html = expandIMotorInventory(ctx, pageURL, html)
 		html = s.expandTeamVelocityInventory(ctx, pageURL, html)
 		html = s.expandDealerOnInventory(ctx, pageURL, html)
+		html = s.expandDealerSyncInventory(ctx, pageURL, html)
 		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
 			continue
 		}
@@ -768,6 +770,20 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		seen[next] = struct{}{}
 		out = append(out, next)
 	}
+	for _, next := range extractDealerEProcessPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
+	for _, next := range extractDealrPageURLs(pageURL, doc) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	for _, next := range extractBlazorPagingPageURLs(pageURL, doc) {
 		if _, ok := seen[next]; ok {
 			continue
@@ -895,6 +911,87 @@ func extractBlazorPagingPageURLs(pageURL string, doc *goquery.Document) []string
 		next := *u
 		q := next.Query()
 		q.Set("Paging.Page", strconv.Itoa(p))
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// extractDealrPageURLs handles Dealr (dealrcloud.com) sites. Their pager is
+// <ul class="pagination" dealr-pagination="6"> whose page numbers are
+// <a dealr-pagination-target="N"> with no href — nothing crawlable — but the
+// server honors a plain ?page=N GET. The attribute carries the page count, so
+// synthesize every remaining page from it.
+func extractDealrPageURLs(pageURL string, doc *goquery.Document) []string {
+	pager := doc.Find("[dealr-pagination]").First()
+	if pager.Length() == 0 {
+		return nil
+	}
+	total := parsePositiveInt(strings.TrimSpace(pager.AttrOr("dealr-pagination", "")))
+	if total <= 1 {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	cur := 1
+	if v := parsePositiveInt(strings.TrimSpace(u.Query().Get("page"))); v > 0 {
+		cur = v
+	}
+	if cur >= total {
+		return nil
+	}
+	out := make([]string, 0, total-cur)
+	for p := cur + 1; p <= total; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("page", strconv.Itoa(p))
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// extractDealerEProcessPageURLs handles Dealer eProcess "carbon" SRPs
+// (autosensenh.com). Older eProcess themes render real ?p=N anchors, but the
+// carbon pager is a text input plus two arrow <div>s driven by JS, so there is
+// nothing crawlable. The page count sits in .pagination_settings__page_count
+// and the current page in the input's value attribute, and the server honors a
+// plain ?p=N GET — so synthesize every remaining page from those.
+//
+// Emitting all remaining pages (not just the next) keeps one bad fetch from
+// halting the walk, matching the other synthesizing walkers here.
+func extractDealerEProcessPageURLs(pageURL string, doc *goquery.Document) []string {
+	count := doc.Find(".pagination_settings__page_count").First()
+	if count.Length() == 0 {
+		return nil
+	}
+	total := parsePositiveInt(strings.TrimSpace(count.Text()))
+	if total <= 1 {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	// Prefer the requested URL's own ?p= — the widget input always renders the
+	// page the server served, but the URL is what the walk is anchored on.
+	cur := parsePositiveInt(strings.TrimSpace(u.Query().Get("p")))
+	if cur <= 0 {
+		cur = parsePositiveInt(strings.TrimSpace(doc.Find("input.pagination_settings__input").First().AttrOr("value", "")))
+	}
+	if cur <= 0 {
+		cur = 1
+	}
+	if cur >= total {
+		return nil
+	}
+	out := make([]string, 0, total-cur)
+	for p := cur + 1; p <= total; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("p", strconv.Itoa(p))
 		next.RawQuery = q.Encode()
 		out = append(out, next.String())
 	}
@@ -1145,6 +1242,11 @@ func looksLikePaginationOrInventoryURL(u string) bool {
 		strings.Contains(l, "offset=") ||
 		strings.Contains(l, "pagenum=") ||
 		strings.Contains(l, "pagesize=") ||
+		// Dealer eProcess pages with a bare ?p=N. Anchored on the separator so
+		// this cannot match some other parameter ending in "p"; like offset=
+		// above, the link is already scoped to a pagination selector.
+		strings.Contains(l, "?p=") ||
+		strings.Contains(l, "&p=") ||
 		strings.Contains(l, "/inventory") ||
 		strings.Contains(l, "/used-cars") ||
 		strings.Contains(l, "/cars-for-sale")

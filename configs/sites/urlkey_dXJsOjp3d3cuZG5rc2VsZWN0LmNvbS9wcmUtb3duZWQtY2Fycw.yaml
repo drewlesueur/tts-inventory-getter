@@ -1,0 +1,47 @@
+name: url::www.dnkselect.com/pre-owned-cars
+# DealerSync platform (images.dealersync.com, ds-* classes).
+#
+# The SRP server-renders only the FIRST page — 15 of 76 vehicles here — and
+# loads the rest by infinite scroll from a JSON endpoint:
+#   GET /Inventory/Search?Results=15&startIndex=N&SortCriteria=Year&SortDirection=desc&version=2
+# which reports totalResults and returns 15 per call no matter what Results says.
+# expandDealerSyncInventory (internal/scrape/dealersync.go) walks it and
+# synthesizes the .ds-api-card elements these selectors read. Without it a plain
+# fetch looks successful while silently capturing a fifth of the lot — and the
+# ?page / ?p / ?start / ?offset params are all ignored (they re-serve page 1).
+#
+# The raw SRP also ships Handlebars template cards with literal "{{Vin}}"
+# placeholders, so never trust a raw .ds-vehicle-list-item count.
+# The API's FinalPrice is the SRP's "Sale Price" (internet price + doc fee).
+baseUrl: https://www.dnkselect.com/pre-owned-cars
+listPage:
+    waitSelectors:
+        - .ds-api-card, .ds-vehicle-list-item
+    cardSelector: .ds-api-card
+    titleSelector: .ds-api-title
+    urlSelector: a.ds-api-url
+    stockSelector: .ds-api-stock
+    priceSelector: .ds-api-price
+    mileageSelector: .ds-api-mileage
+    imageSelector: img.ds-api-image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerSync platform; inventory via /Inventory/Search JSON, expanded in Go (dealersync.go).
+    discoveredAt: "2026-09-11T00:00:00Z"

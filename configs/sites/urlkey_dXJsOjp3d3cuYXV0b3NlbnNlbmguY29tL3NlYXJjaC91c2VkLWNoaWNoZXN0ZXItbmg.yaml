@@ -1,0 +1,66 @@
+name: url::www.autosensenh.com/search/used-chichester-nh
+# Dealer eProcess platform (cdn.dealereprocess.org assets), "carbon" SRP theme —
+# the same platform as hornemazdaavondale but a newer template: cards are
+# .vehicle_item, not .srp_vehicle_item_container.
+#
+# Behind Cloudflare, and harder than horne: a plain fetch gets a 403 block shell
+# and Camoufox is refused too. Only the user's real browser (Brave over CDP,
+# fetch_page.py's third strategy) gets through.
+#
+# Pagination: 79 vehicles, 12 per page = 7 pages. This theme's pager is a text
+# input plus two JS arrow <div>s — no crawlable hrefs at all — so the page URLs
+# are synthesized by extractDealerEProcessPageURLs from
+# .pagination_settings__page_count and served as ?p=N.
+# (?ct=12/24/36/48 also sets page size, but only those four values; ?ct=all and
+# ?ct=100 are ignored, and the source URL we are handed carries no query.)
+#
+# Field notes:
+#  * Title is h2.vehicle_title; the enclosing widget div carries the vehicle id,
+#    so don't anchor on its class.
+#  * Pricing is a <dl> of "Price" -> "Transparent Price includes Dealer Admin
+#    Fee". The LAST dd.vehicle_price is what the buyer pays ($4,798 vs the
+#    $4,000 pre-fee figure) and matches the card's own JSON-LD offer price.
+#  * Stock and mileage are rows of table.srp_details, selected by their label
+#    with :contains() since the row order is not guaranteed.
+#  * VIN rides on the .simpwebchat_srp_item data-vin inside the card
+#    (card-attribute fallback), so every card is complete and the per-item
+#    detail gate skips the VDP fetches on its own.
+#  * Card photos are lazy-loaded on data-src; img.loopslider__image is the
+#    gallery, in order, so the first one is the primary photo.
+baseUrl: https://www.autosensenh.com/search/used-chichester-nh/
+listPage:
+    waitSelectors:
+        - .vehicle_item
+    cardSelector: .vehicle_item
+    titleSelector: h2.vehicle_title
+    urlSelector: a[href*='/auto/']
+    # Quoted: an unquoted " #" in a YAML plain scalar starts a comment and
+    # would truncate this to tr:contains("Stock.
+    stockSelector: 'tr:contains("Stock #") .details-overview_data'
+    priceSelector: dd.vehicle_price:last-of-type
+    mileageSelector: tr:contains("Mileage") .details-overview_data
+    # Not a bare 'img' fallback: each card also carries a 360-video play
+    # button (gcbimages…play_video_360.png) that would win the pick.
+    imageSelector: img.loopslider__image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 12
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - img.loopslider__image
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Dealer eProcess carbon SRP behind Cloudflare; ?p=N pagination, 12 per page.
+    discoveredAt: "2026-09-12T00:00:00Z"

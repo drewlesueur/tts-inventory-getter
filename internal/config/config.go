@@ -38,6 +38,21 @@ var DefaultCacheOnlyURLs = []string{
 	// iMotor. The cloud lacks the card/__NEXT_DATA__ dedupe fix, so a live scrape
 	// there returns every truck twice (63 for a 32-truck lot).
 	"https://christensentrucksales.com/inventory",
+	// Dealr. Unprotected, but its pager has no hrefs — without the ?page=N
+	// synthesizer the cloud would cache page 1 only (50 of 251).
+	"https://www.utahusedcarfactory.com/inventory",
+	// DealerCarSearch (i10r theme). Unprotected and cloud-reachable, but the
+	// cloud has no config for it and its python layer is down.
+	"https://www.gbautosales.com/inventory",
+	// RV dealer (theme-builder). Unprotected; cache-only until the cloud has
+	// this config, without which it would extract nothing useful.
+	"https://www.bobbycombsrvcenter.com/inventory",
+	// DealerSync. Unprotected, but the cloud has no config and would pick up the
+	// Handlebars template cards instead of the 15 real ones.
+	"https://www.dnkselect.com/pre-owned-cars",
+	// CarsForSale classic theme behind DataDome; needs the local bot-protection
+	// chain (Brave/Camoufox).
+	"https://www.statestreettruckstop.com/cars-for-sale",
 }
 
 // splitAndTrim splits a comma-separated env value into trimmed non-empty parts.

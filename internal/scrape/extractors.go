@@ -92,6 +92,10 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 			// DealerCenter cards carry the VIN on the media-modal container.
 			item.VIN = validVINCandidate(firstAttr(s, "[data-vehicle-vin]", "data-vehicle-vin"))
 		}
+		if item.VIN == "" {
+			// Dealr (dealrcloud) cards expose it only on the CarGurus badge.
+			item.VIN = validVINCandidate(firstAttr(s, "[data-cg-vin]", "data-cg-vin"))
+		}
 		normalized := NormalizeItem(pageURL, item)
 		if !looksLikeUsefulListing(normalized) {
 			return

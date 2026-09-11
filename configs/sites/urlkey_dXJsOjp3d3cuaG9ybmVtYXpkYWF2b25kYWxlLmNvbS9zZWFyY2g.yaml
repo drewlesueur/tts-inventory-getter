@@ -1,0 +1,55 @@
+name: url::www.hornemazdaavondale.com/search
+# Dealer eProcess platform (cdn.dealereprocess.org assets, srp_* classes),
+# behind Cloudflare — a direct fetch gets the "Just a moment..." challenge, so
+# this needs the browser path. 299 vehicles at 12 per page = 25 pages.
+#
+# Pagination is ?p=N (elided: 1-5 … 25). Those links were being dropped by
+# looksLikePaginationOrInventoryURL until "?p="/"&p=" were added to it —
+# the platform uses neither page= nor /inventory in its URLs.
+#
+# Field notes:
+#  * Title lives in a widget div whose class carries the widget id and the
+#    vehicle id (multi_widget_1628_<vehicleId>), so match on the stable prefix.
+#  * Pricing is a <dl> of Retail -> Discount -> Doc Fee -> dealer Price; the
+#    LAST dd.vehicle_price is what the buyer pays ($11,998 vs $15,790 retail),
+#    so :last-of-type rather than .First().
+#  * Stock and mileage are rows of table.srp_details, selected by their label
+#    with :contains() since the row order is not guaranteed.
+#  * VIN rides on a[data-vin] inside the card (card-attribute fallback).
+baseUrl: https://www.hornemazdaavondale.com/search/
+listPage:
+    waitSelectors:
+        - .srp_vehicle_item_container
+    cardSelector: .srp_vehicle_item_container
+    titleSelector: '[class*=''multi_widget_1628_'']'
+    urlSelector: a[href*='/auto/']
+    # Quoted: unquoted, the " #" starts a YAML comment and this silently became
+    # tr:contains("Stock — the card's stock number was never read.
+    stockSelector: 'tr:contains("Stock #") .details-overview_data'
+    priceSelector: dd.vehicle_price:last-of-type
+    mileageSelector: tr:contains("Mileage") .details-overview_data
+    imageSelector: img.preview_vehicle_image_item, img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 30
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # Cards already carry VIN, stock, mileage, price and photos; 299 VDP fetches
+    # through the Cloudflare-guarded browser path would add nothing.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Dealer eProcess platform behind Cloudflare; ?p=N pagination, 12 per page.
+    discoveredAt: "2026-09-11T00:00:00Z"

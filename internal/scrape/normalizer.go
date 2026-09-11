@@ -113,12 +113,22 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 	item = fillFuelEconomyConversions(item)
 	if item.Make == "" || item.Model == "" {
 		parts := strings.Fields(item.Title)
-		if len(parts) >= 3 {
+		// Make/model follow the year, which is not always the first word: dealer
+		// titles routinely lead with a condition ("Used 2013 Mazda Mazda3 i SV"),
+		// and taking parts[1]/parts[2] blindly reads the year as the make.
+		start := 1
+		for i, p := range parts {
+			if yearTitle.MatchString(p) {
+				start = i + 1
+				break
+			}
+		}
+		if len(parts) > start+1 {
 			if item.Make == "" {
-				item.Make = parts[1]
+				item.Make = parts[start]
 			}
 			if item.Model == "" {
-				item.Model = parts[2]
+				item.Model = parts[start+1]
 			}
 		}
 	}
@@ -221,6 +231,10 @@ func isLikelyVehicleImageURL(raw string) bool {
 		// ("/fit-in/640x480/filters:quality(72)/<key>") is the common one; without
 		// these every photo on such a site is discarded as "not a vehicle image".
 		"/fit-in/", "filters:", "/resize/", "cloudfront.net", "/photos/",
+		// Dealer eProcess serves vehicle photos from an extension-less key whose
+		// tail is a base64 blob, so no rule above matches them. Their static
+		// assets live on cdn.dealereprocess.*org*, not this host.
+		"cloudflareimages.dealereprocess.com",
 	}
 	for _, p := range positive {
 		if strings.Contains(u, p) {

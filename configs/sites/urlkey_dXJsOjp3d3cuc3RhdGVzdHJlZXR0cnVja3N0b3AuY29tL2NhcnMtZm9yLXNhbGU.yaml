@@ -1,0 +1,41 @@
+name: url::www.statestreettruckstop.com/cars-for-sale
+# CarsForSale platform, classic theme (li.vehicle-snapshot) behind DataDome —
+# same shape as snbmotors / saiautosale / jjsadobeauto. Direct curl gets the
+# captcha-delivery page; the Brave/Camoufox chain gets through.
+# "Page 1 of 2" at 24 per page, so ~48 vehicles; maxPages stays small because
+# every page fetch is slow through the bot-protection chain.
+baseUrl: https://www.statestreettruckstop.com/cars-for-sale
+listPage:
+    waitSelectors:
+        - li.vehicle-snapshot
+    cardSelector: li.vehicle-snapshot
+    titleSelector: .vehicle-snapshot__title
+    urlSelector: a[href*='/details/']
+    stockSelector: '[data-stock], [data-stock-no], [data-vehicle-stock-no], [itemprop=''sku''], [class*=''stock'']'
+    priceSelector: .vehicle-snapshot__main-info, [class*='price']
+    mileageSelector: .mileage, [class*='mileage']
+    imageSelector: img
+    totalSelector: .inventory-results__count, [class*='results-count']
+    pagination:
+        type: page_number
+        nextSelector: .data-button-next-page
+        loadMoreSelector: ""
+        maxPages: 5
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - '[class*=''gallery''] img'
+        - img[data-src*='carsforsale.com']
+        - img[src*='carsforsale.com']
+    vinSelector: '[itemprop=''vehicleIdentificationNumber''], [data-vin]'
+    stockSelector: '[itemprop=''sku''], [data-stock], [class*=''stock'']'
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: CarsForSale classic theme behind DataDome; PageNumber/PageSize pagination.
+    discoveredAt: "2026-09-11T00:00:00Z"
