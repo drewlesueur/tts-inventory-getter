@@ -1,29 +1,41 @@
 name: url::www.tucsonusedcarsandtrucks.com/pre-owned-cars
+# DealerSync platform (images.dealersync.com, ds-* classes) — same shape as
+# dnkselect.com. No bot protection: a plain curl gets HTTP 200.
+#
+# The SRP server-renders only the FIRST page — 16 cards of 57 vehicles — and
+# loads the rest by infinite scroll from a JSON endpoint:
+#   GET /Inventory/Search?Results=15&startIndex=N&SortCriteria=Year&SortDirection=desc&version=2
+# which reports totalResults and returns 15 per call no matter what Results says.
+# expandDealerSyncInventory (internal/scrape/dealersync.go) walks it and
+# synthesizes the .ds-api-card elements these selectors read.
+#
+# The previous auto-discovered config here read the raw SRP with wildcard
+# selectors ([class*='vehicle'][class*='item'] …) and produced 39 "vehicles"
+# from 16 cards — the page also ships Handlebars template cards with literal
+# {{Vin}} placeholders, so never trust a raw .ds-vehicle-list-item count.
+# The API's FinalPrice is the SRP's "Sale Price" (internet price + doc fee).
 baseUrl: https://www.tucsonusedcarsandtrucks.com/pre-owned-cars
 listPage:
     waitSelectors:
-        - .ds-vehicle-list-item, .srp-card, [class*='vehicle'][class*='item'], a[href*='/pre-owned-cars/detail/']
-    cardSelector: .ds-vehicle-list-item, .srp-card, .vehicle-card, [class*='vehicle'][class*='item'], [class*='inventory'][class*='item']
-    titleSelector: h2, h3
-    urlSelector: a[href*='/pre-owned-cars/detail/'], a[href*='/vehicle-details/'], a[href*='/inventory/']
-    stockSelector: '[data-stock], [data-stock-no], [itemprop=''sku''], [class*=''stock''], [id*=''stock'']'
-    priceSelector: .price, [class*='price']
-    mileageSelector: .mileage, [class*='mileage']
-    imageSelector: img
+        - .ds-api-card, .ds-vehicle-list-item
+    cardSelector: .ds-api-card
+    titleSelector: .ds-api-title
+    urlSelector: a.ds-api-url
+    stockSelector: .ds-api-stock
+    priceSelector: .ds-api-price
+    mileageSelector: .ds-api-mileage
+    imageSelector: img.ds-api-image
     totalSelector: ""
     pagination:
         type: ""
         nextSelector: ""
         loadMoreSelector: ""
-        maxPages: 0
-        infiniteScroll: true
-        scrollMaxAttempts: 25
-        clickMaxAttempts: 30
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
 detailPage:
-    imageSelectors:
-        - .gallery img
-        - img[data-src]
-        - img[src*='vehicle']
+    imageSelectors: []
     vinSelector: ""
     stockSelector: ""
 regex:
@@ -32,4 +44,5 @@ regex:
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    discoveredAt: "2026-08-28T09:31:44Z"
+    notes: DealerSync platform; inventory via /Inventory/Search JSON, expanded in Go (dealersync.go).
+    discoveredAt: "2026-09-12T00:00:00Z"
