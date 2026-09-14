@@ -321,19 +321,15 @@ func parseVDPInfoBlocks(doc *goquery.Document) map[string]string {
 }
 
 func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, html string) {
-	// goquery's .Text() includes the contents of <style> and <script>, so the
-	// label sweeps below would mine CSS and JS as if it were spec data — an
-	// inline font stack containing "Apple Color Emoji" was being read as
-	// color: Emoji. Images are already extracted by the caller, so dropping
-	// these nodes here costs nothing.
-	doc.Find("script, style, noscript").Remove()
+	// goquery's .Text() includes the contents of <style>, <script> and <svg>,
+	// so the label sweeps below would mine CSS, JS and icon titles as if they
+	// were spec data — an inline font stack containing "Apple Color Emoji" was
+	// being read as color: Emoji, and a <title>engine</title> icon glued itself
+	// onto the engine value. Images are already extracted by the caller, so
+	// dropping these nodes here costs nothing.
+	doc.Find("script, style, noscript, svg").Remove()
 
 	kv := map[string]string{}
-
-	// Seed with the clean carsforsale.com spec pairs first.
-	for k, v := range parseVDPInfoBlocks(doc) {
-		kv[k] = v
-	}
 
 	doc.Find("tr").Each(func(_ int, tr *goquery.Selection) {
 		cells := tr.Find("th,td")
@@ -381,6 +377,29 @@ func fillCommonVehicleFields(item *model.InventoryItem, doc *goquery.Document, h
 		}
 		applySpecTile(item, text)
 	})
+
+	// Applied LAST so it wins: parseVDPInfoBlocks reads carsforsale's explicit
+	// label/value elements, while the generic sweeps above take an ancestor's
+	// .Text() and glue the icon's <svg><title> and the label onto the value
+	// ("engineEngine3.6L V6 308hp" for a clean "3.6L V6 308hp"). Seeding it
+	// first meant the precise value was always overwritten by the glued one.
+	vdp := parseVDPInfoBlocks(doc)
+	for k, v := range vdp {
+		kv[k] = v
+	}
+	// The field assignments below only fill blanks, so a glued value already
+	// written by applySpecTile would keep the clean one out. These pairs come
+	// from named elements, not a text split, so they overwrite.
+	for label, field := range map[string]*string{
+		"engine":         &item.Engine,
+		"transmission":   &item.Transmission,
+		"drivetrain":     &item.DriveType,
+		"exterior color": &item.Color,
+	} {
+		if v := clean(vdp[label]); v != "" {
+			*field = v
+		}
+	}
 
 	if item.Make == "" {
 		item.Make = pickValueByLabel(kv, "make")
