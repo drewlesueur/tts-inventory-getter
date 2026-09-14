@@ -714,6 +714,11 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		"nav[class*='pagination'] a[href]",
 		"ul[class*='pagination'] a[href]",
 		"ul[class*='page'] a[href]",
+		// Container-agnostic: Dealer eProcess wraps its pager in
+		// <div class="search-pagination"> around an unclassed <ul>, so the
+		// element-specific selectors above miss every page link. The href filter
+		// and same-host check below keep this from pulling in stray links.
+		"[class*='pagination'] a[href]",
 		"a[class*='next'][href]",
 		"a[href*='/page/']",
 		"a[href*='page=']",
@@ -1046,6 +1051,7 @@ func extractDealerCarSearchPageURLs(pageURL string, doc *goquery.Document) []str
 func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 	highest := 0
 	template := ""
+	param := ""
 	linked := map[int]struct{}{}
 	doc.Find("[class*='pagination'] a[href], [class*='pager'] a[href]").Each(func(_ int, s *goquery.Selection) {
 		href, ok := s.Attr("href")
@@ -1053,8 +1059,13 @@ func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 			return
 		}
 		m := pageQueryParamRe.FindStringSubmatch(href)
-		if len(m) < 2 {
+		if len(m) < 3 {
 			return
+		}
+		// Reuse the widget's own parameter name: writing "page" onto an
+		// eProcess "?p=2" link yields "?p=2&page=6", which re-serves page 2.
+		if param == "" {
+			param = strings.ToLower(m[1])
 		}
 		abs := absolutize(pageURL, href)
 		if abs == "" || !sameHost(pageURL, abs) {
@@ -1066,7 +1077,7 @@ func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 		if template == "" {
 			template = abs
 		}
-		n := parsePositiveInt(m[1])
+		n := parsePositiveInt(m[2])
 		if n <= 0 {
 			return
 		}
@@ -1081,6 +1092,9 @@ func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 	if template == "" {
 		template = pageURL
 	}
+	if param == "" {
+		param = "page"
+	}
 	u, err := url.Parse(template)
 	if err != nil {
 		return nil
@@ -1088,7 +1102,7 @@ func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 	// Skip when already on a numbered page: the first page's widget links the
 	// last page, so the full set is synthesized once and re-deriving it from a
 	// later page would only repeat work.
-	if cur, err := url.Parse(pageURL); err == nil && parsePositiveInt(cur.Query().Get("page")) > 1 {
+	if cur, err := url.Parse(pageURL); err == nil && parsePositiveInt(cur.Query().Get(param)) > 1 {
 		return nil
 	}
 	// Only the elided numbers are synthesized. The rendered links are already
@@ -1102,14 +1116,18 @@ func extractNumberedPageURLs(pageURL string, doc *goquery.Document) []string {
 		}
 		next := *u
 		q := next.Query()
-		q.Set("page", strconv.Itoa(p))
+		q.Set(param, strconv.Itoa(p))
 		next.RawQuery = q.Encode()
 		out = append(out, next.String())
 	}
 	return out
 }
 
-var pageQueryParamRe = regexp.MustCompile(`(?i)[?&]page=(\d+)`)
+// Dealer eProcess numbers its pages ?p=N rather than ?page=N; without it the
+// elided middle of a "1 2 3 4 5 … 25" widget is never synthesized and the walk
+// stops at the six rendered links. Anchored on the separator so it cannot match
+// some other parameter ending in "p", matching looksLikePaginationOrInventoryURL.
+var pageQueryParamRe = regexp.MustCompile(`(?i)[?&](page|p)=(\d+)`)
 
 // pageNumberParam returns the PageNumber query value of a URL, 0 if absent.
 func pageNumberParam(rawURL string) int {

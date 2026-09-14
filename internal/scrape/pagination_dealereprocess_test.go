@@ -70,8 +70,9 @@ func TestAutosenseConfigExtractsFullCard(t *testing.T) {
   <img src="//gcbimages.storage.googleapis.com/vidbtn/play_video_360.png" alt="Button for Video">
   <img class="lazyload-target loopslider__image" data-src="https://cloudflareimages.dealereprocess.com/resrc/images/c_limit/v1/dvp/3886/54603238245/Used-2013-Mazda-Mazda3-iSV-ID54603238245-aHR0cDovL2V4YW1wbGU=">
   <div class="simpwebchat_srp_item" data-vin="JM1BL1TG1D1779942" data-stock_no="N1484A"></div>
-  <dl><dt>Price</dt><dd class="vehicle_price">$4,000</dd>
-      <dt>Transparent Price includes Dealer Admin Fee</dt><dd class="vehicle_price">$4,798</dd></dl>
+  <dl><dt>Price</dt><dd class="vehicle_price" style=" color: #000000;">$4,000</dd>
+      <dt>Transparent Price includes Dealer Admin Fee</dt>
+      <dd class="vehicle_price" style=" color: #34C200;font-weight: bold;">$4,798</dd></dl>
   <table class="srp_details"><tbody>
     <tr><td class="details-overview_title bold">Mileage</td><td class="details-overview_data">188,127 </td></tr>
     <tr><td class="details-overview_title bold">Stock #</td><td class="details-overview_data">N1484A</td></tr>

@@ -37,7 +37,10 @@ listPage:
     # Quoted: an unquoted " #" in a YAML plain scalar starts a comment and
     # would truncate this to tr:contains("Stock.
     stockSelector: 'tr:contains("Stock #") .details-overview_data'
-    priceSelector: dd.vehicle_price:last-of-type
+    # Bold = the sale price, same as hornemazdaavondale. :last-of-type also
+    # works on today's markup but breaks the moment a trailing rebate row is
+    # added after the final price, which is what it does on new-car cards.
+    priceSelector: 'dd.vehicle_price[style*=''font-weight: bold'']'
     mileageSelector: tr:contains("Mileage") .details-overview_data
     # Not a bare 'img' fallback: each card also carries a 360-video play
     # button (gcbimages…play_video_360.png) that would win the pick.

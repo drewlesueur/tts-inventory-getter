@@ -21,12 +21,19 @@ listPage:
     waitSelectors:
         - .srp_vehicle_item_container
     cardSelector: .srp_vehicle_item_container
-    titleSelector: '[class*=''multi_widget_1628_'']'
+    # Down to the anchor: the widget div also contains a <style> block and, on
+    # in-transit cars, a tippy <script>, and goquery .Text() glues all of it onto
+    # the title.
+    titleSelector: '[class*=''multi_widget_1628_''] h2 a'
     urlSelector: a[href*='/auto/']
     # Quoted: unquoted, the " #" starts a YAML comment and this silently became
     # tr:contains("Stock — the card's stock number was never read.
     stockSelector: 'tr:contains("Stock #") .details-overview_data'
-    priceSelector: dd.vehicle_price:last-of-type
+    # The bold row is the sale price in BOTH layouts: used cards end
+    # Retail -> Discount -> Doc Fee -> dealer Price, but NEW cards append a
+    # "Mazda Conditional Offers" rebate AFTER the "Everyone Price", so
+    # :last-of-type read a -$2,250 rebate as the price on 222 of 298 vehicles.
+    priceSelector: 'dd.vehicle_price[style*=''font-weight: bold'']'
     mileageSelector: tr:contains("Mileage") .details-overview_data
     imageSelector: img.preview_vehicle_image_item, img
     totalSelector: ""
