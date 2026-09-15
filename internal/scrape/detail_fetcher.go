@@ -40,6 +40,15 @@ func populateDetailsFromHTML(ctx context.Context, sizeCache *ImageSizeCache, ite
 	if err != nil {
 		return item, err
 	}
+	// Every stock sweep below is guarded by "StockID == ''", but NormalizeItem
+	// has already synthesized the listing id out of the URL for cards that
+	// publish no stock number — so the detail page's real dealer stock number
+	// could never land (santanmotor cached 128898143 instead of 5871). Clear the
+	// synthesized value first; NormalizeItem re-derives it at the end of this
+	// function if the detail page turns out to have none either.
+	if item.StockID != "" && item.StockID == listingIDFromURL(item.URL) {
+		item.StockID = ""
+	}
 	imgSet := map[string]bool{}
 	for _, sel := range site.DetailPage.ImageSelectors {
 		doc.Find(sel).Each(func(_ int, s *goquery.Selection) {

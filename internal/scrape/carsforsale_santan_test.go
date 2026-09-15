@@ -84,3 +84,54 @@ func TestSantanDetailReadsVINAndDealerStock(t *testing.T) {
 		t.Fatalf("engine = %q, want the value with no icon title or label glued on", out.Engine)
 	}
 }
+
+// The listing id in the URL is synthesized into StockID by NormalizeItem before
+// the detail sweep runs, and every stock sweep is guarded on StockID being
+// empty — so the dealer's real stock number could never replace it, and
+// santanmotor cached 128898143 for a car whose VDP says 5871.
+func TestSantanDetailOverridesSynthesizedListingID(t *testing.T) {
+	vdp := `<div class="vdp-info-block__info-item-text">
+  <div class="vdp-info-block__info-item-title">Stock #</div>
+  <div class="vdp-info-block__info-item-description">5871</div></div>`
+	it := model.InventoryItem{
+		URL:     "https://www.santanmotor.com/details/used-2016-cadillac-srx/128898143",
+		StockID: "128898143", // what NormalizeItem synthesized from the URL
+		VIN:     "3GYFNBE3XGS540155",
+	}
+	out, err := populateDetailsFromHTML(context.Background(), nil, it, loadSantan(t), vdp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.StockID != "5871" {
+		t.Fatalf("stock = %q, want the VDP's 5871 rather than the listing id", out.StockID)
+	}
+}
+
+// ...but when the detail page has no stock number either, clearing it must not
+// strand the item without an identifier: NormalizeItem re-fills it, preferring
+// the VIN as the stable cross-system id and only using the listing id when
+// there is no valid VIN.
+func TestSantanDetailFallsBackWhenVDPHasNoStock(t *testing.T) {
+	it := model.InventoryItem{
+		URL:     "https://www.santanmotor.com/details/used-2016-cadillac-srx/128898143",
+		StockID: "128898143",
+		VIN:     "3GYFNBE3XGS540155",
+	}
+	out, err := populateDetailsFromHTML(context.Background(), nil, it, loadSantan(t), `<div>no specs here</div>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.StockID != "3GYFNBE3XGS540155" {
+		t.Fatalf("stock = %q, want the VIN fallback", out.StockID)
+	}
+
+	// With no VIN either, the listing id is the last resort.
+	noVIN := model.InventoryItem{URL: "https://www.santanmotor.com/details/used-2016-cadillac-srx/128898143", StockID: "128898143"}
+	out, err = populateDetailsFromHTML(context.Background(), nil, noVIN, loadSantan(t), `<div>no specs here</div>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.StockID != "128898143" {
+		t.Fatalf("stock = %q, want the listing id as the last resort", out.StockID)
+	}
+}

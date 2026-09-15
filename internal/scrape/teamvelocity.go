@@ -18,7 +18,10 @@ import (
 const teamVelocityCardSelector = "[class*='inventory-car-parent-box']"
 
 func (s Service) expandTeamVelocityInventory(ctx context.Context, pageURL, renderedHTML string) string {
-	if !strings.Contains(renderedHTML, "secureoffersites.com") {
+	// Some Team Velocity responses omit the secureoffersites asset hostname even
+	// though they contain the platform's inventory cards. Recognize either marker
+	// so the bare landing page cannot be mistaken for the complete inventory.
+	if !strings.Contains(renderedHTML, "secureoffersites.com") && !strings.Contains(renderedHTML, "inventory-car-parent-box") {
 		return renderedHTML
 	}
 	u, err := url.Parse(pageURL)
