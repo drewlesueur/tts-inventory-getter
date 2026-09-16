@@ -803,6 +803,13 @@ func extractNextPageURLs(pageURL, html string, site config.SiteConfig) []string 
 		seen[next] = struct{}{}
 		out = append(out, next)
 	}
+	for _, next := range extractNextDataPageURLs(pageURL, html) {
+		if _, ok := seen[next]; ok {
+			continue
+		}
+		seen[next] = struct{}{}
+		out = append(out, next)
+	}
 	for _, next := range extractDealerDotComPageURLs(pageURL, html) {
 		if _, ok := seen[next]; ok {
 			continue
@@ -946,6 +953,61 @@ func extractDealrPageURLs(pageURL string, doc *goquery.Document) []string {
 	}
 	if cur >= total {
 		return nil
+	}
+	out := make([]string, 0, total-cur)
+	for p := cur + 1; p <= total; p++ {
+		next := *u
+		q := next.Query()
+		q.Set("page", strconv.Itoa(p))
+		next.RawQuery = q.Encode()
+		out = append(out, next.String())
+	}
+	return out
+}
+
+// extractNextDataPageURLs handles Next.js inventory pages whose paging is done
+// client-side, so the server HTML carries no page links at all (primemotorco:
+// 148 vehicles, 8 pages of 20, and not one ?page= href). The __NEXT_DATA__ blob
+// states page/pageCount, and the server honors a plain ?page=N GET, so
+// synthesize every remaining page from it.
+func extractNextDataPageURLs(pageURL, html string) []string {
+	const marker = `<script id="__NEXT_DATA__" type="application/json">`
+	start := strings.Index(html, marker)
+	if start == -1 {
+		return nil
+	}
+	start += len(marker)
+	end := strings.Index(html[start:], `</script>`)
+	if end == -1 {
+		return nil
+	}
+	var root struct {
+		Props struct {
+			PageProps struct {
+				Page      int `json:"page"`
+				PageCount int `json:"pageCount"`
+			} `json:"pageProps"`
+		} `json:"props"`
+	}
+	if err := json.Unmarshal([]byte(html[start:start+end]), &root); err != nil {
+		return nil
+	}
+	total := root.Props.PageProps.PageCount
+	cur := root.Props.PageProps.Page
+	if cur <= 0 {
+		cur = 1
+	}
+	if total <= 1 || cur >= total || total > 500 {
+		return nil
+	}
+	u, err := url.Parse(pageURL)
+	if err != nil {
+		return nil
+	}
+	// Prefer the requested URL's own ?page= so a later page does not re-emit
+	// the pages already walked.
+	if v := parsePositiveInt(strings.TrimSpace(u.Query().Get("page"))); v > 0 {
+		cur = v
 	}
 	out := make([]string, 0, total-cur)
 	for p := cur + 1; p <= total; p++ {

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
@@ -524,7 +525,7 @@ func pickYearString(m map[string]any) string {
 
 func pickString(m map[string]any, keys ...string) string {
 	for _, key := range keys {
-		if v, ok := m[key]; ok {
+		if v, ok := lookupKey(m, key); ok {
 			switch t := v.(type) {
 			case string:
 				if strings.TrimSpace(t) != "" {
@@ -536,6 +537,35 @@ func pickString(m map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// lookupKey matches JSON keys regardless of case and separator style. The key
+// lists in this file are written snake_case, but Next.js/Strapi payloads use
+// camelCase ("stockNumber", "exteriorColor", "bodyType") — an exact lookup
+// missed every one of them, so primemotorco's stock numbers were discarded and
+// the VIN was substituted for all 148 vehicles.
+func lookupKey(m map[string]any, key string) (any, bool) {
+	if v, ok := m[key]; ok {
+		return v, true
+	}
+	want := normalizeJSONKey(key)
+	for k, v := range m {
+		if normalizeJSONKey(k) == want {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+func normalizeJSONKey(k string) string {
+	var b strings.Builder
+	for _, r := range k {
+		if r == '_' || r == '-' || r == ' ' {
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }
 
 func pickImageList(m map[string]any) []string {
@@ -553,8 +583,18 @@ func pickImageList(m map[string]any) []string {
 	for _, key := range []string{"primary_image", "primary_photo", "image", "image_url", "photo"} {
 		add(pickString(m, key))
 	}
+	// Some payloads ship the whole gallery as one comma-separated string rather
+	// than an array (primemotorco's "allPhotos" holds up to 32 URLs that way);
+	// without this only the single "photo" thumbnail survives.
+	for _, key := range []string{"all_photos", "image_urls", "photo_urls"} {
+		if joined := pickString(m, key); strings.Contains(joined, ",") {
+			for _, part := range strings.Split(joined, ",") {
+				add(part)
+			}
+		}
+	}
 	for _, key := range []string{"images", "photos", "gallery"} {
-		v, ok := m[key]
+		v, ok := lookupKey(m, key)
 		if !ok {
 			continue
 		}

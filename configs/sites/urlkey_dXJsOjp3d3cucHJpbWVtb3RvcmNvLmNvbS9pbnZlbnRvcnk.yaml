@@ -1,0 +1,62 @@
+name: url::www.primemotorco.com/inventory
+# Next.js (Strapi-backed) storefront — not one of the dealer platforms. The
+# inventory is served in the __NEXT_DATA__ blob as props.pageProps.initialVehicles,
+# which NextDataExtractor reads; the rendered cards are Tailwind divs with no
+# stable classes and, critically, no per-vehicle links, so DOM selectors would
+# be both fragile and lossy. The selectors below are only a fallback.
+#
+# 148 vehicles at pageSize 20 = 8 pages. The page links are client-side only —
+# the server HTML contains no ?page= href — so extractNextDataPageURLs
+# (internal/scrape/service.go) synthesizes them from the blob's page/pageCount.
+#
+# Field notes:
+#  * Keys are camelCase (stockNumber, exteriorColor, allPhotos). pickString used
+#    an exact lookup and missed every one, so the dealer's stock numbers were
+#    dropped and the VIN was substituted; key matching is now case/separator
+#    insensitive.
+#  * allPhotos is a single comma-separated string of up to 32 URLs, not an array.
+#  * The blob carries no VDP url. Cards link nowhere in the server HTML, and the
+#    canonical detail pages are slugs (/vehicle/bmw-m3-4731-portland). Note that
+#    /vehicle/<VIN>/ also resolves (HTTP 200) if per-vehicle links are wanted
+#    later; item.URL is left empty rather than guessing a canonical form.
+#  * No bot protection: a plain curl gets HTTP 200.
+baseUrl: https://www.primemotorco.com/inventory/
+listPage:
+    waitSelectors:
+        - script#__NEXT_DATA__
+    # The loader rejects an empty cardSelector, and fetchListHTML uses it as the
+    # "did the page hydrate" probe — so it must match the rendered cards even
+    # though extraction comes from __NEXT_DATA__. Tailwind's .group wraps each
+    # card (20 per page); the DOM items it yields carry no url/price and are
+    # dropped by looksLikeUsefulListing, leaving the blob's records.
+    cardSelector: .group
+    titleSelector: ""
+    urlSelector: ""
+    stockSelector: ""
+    priceSelector: ""
+    mileageSelector: ""
+    imageSelector: ""
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 12
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # The blob already carries VIN, stock, price, mileage and the full gallery,
+    # and there is no VDP url to fetch anyway.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: Next.js __NEXT_DATA__ initialVehicles; ?page=N synthesized from pageCount.
+    discoveredAt: "2026-09-17T00:00:00Z"
