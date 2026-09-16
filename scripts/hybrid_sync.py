@@ -54,6 +54,9 @@ def call(base, path, payload=None, method=None, timeout=60):
 VPN_HOSTS = (
     "sandiegoautosolutions.com",
     "signatureautoutah.com",
+    "hornemazdaavondale.com",
+    "nelsonmazdacoolsprings.com",
+    "desertsleds.com",
     "peakautosalesco.com",
     "rightchoiceautomotive.com",
     "mmcutah.com",

@@ -1,0 +1,37 @@
+name: url::www.desertsleds.com/cars-for-sale
+# CarsForSale Blazor theme behind DataDome. Inventory cards use
+# li.vehicle-card and pagination is synthesized from the displayed result range.
+baseUrl: https://www.desertsleds.com/cars-for-sale
+listPage:
+    waitSelectors:
+        - li.vehicle-card
+    cardSelector: li.vehicle-card
+    titleSelector: h2.inventory-title
+    urlSelector: a[href*='/Inventory/Details/']
+    stockSelector: ""
+    priceSelector: .srp-ftc-headline .value
+    mileageSelector: ""
+    imageSelector: .card-top-img img
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 8
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - '[class*=''gallery''] img'
+        - img[src*='carsforsale']
+    vinSelector: '[itemprop=''vehicleIdentificationNumber''], [data-vin]'
+    stockSelector: '[itemprop=''sku''], [data-stock], [class*=''stock'']'
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: CarsForSale Blazor theme; ?Paging.Page=N pagination synthesized from Showing X-Y of Z.
+    discoveredAt: "2026-09-16T00:00:00Z"

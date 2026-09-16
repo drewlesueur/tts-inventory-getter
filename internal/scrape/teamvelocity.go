@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
 
 // Team Velocity (secureoffersites.com) dealer sites split inventory across
@@ -17,11 +18,12 @@ import (
 // return their cards merged so the generic extractor sees the full inventory.
 const teamVelocityCardSelector = "[class*='inventory-car-parent-box']"
 
-func (s Service) expandTeamVelocityInventory(ctx context.Context, pageURL, renderedHTML string) string {
+func (s Service) expandTeamVelocityInventory(ctx context.Context, pageURL, renderedHTML string, site config.SiteConfig) string {
 	// Some Team Velocity responses omit the secureoffersites asset hostname even
 	// though they contain the platform's inventory cards. Recognize either marker
 	// so the bare landing page cannot be mistaken for the complete inventory.
-	if !strings.Contains(renderedHTML, "secureoffersites.com") && !strings.Contains(renderedHTML, "inventory-car-parent-box") {
+	isConfiguredTeamVelocity := strings.Contains(strings.ToLower(site.Discovery.Notes), "team velocity")
+	if !isConfiguredTeamVelocity && !strings.Contains(renderedHTML, "secureoffersites.com") && !strings.Contains(renderedHTML, "inventory-car-parent-box") {
 		return renderedHTML
 	}
 	u, err := url.Parse(pageURL)
@@ -52,7 +54,7 @@ func (s Service) expandTeamVelocityInventory(ctx context.Context, pageURL, rende
 			if page > 1 {
 				srp = fmt.Sprintf("%s?page=%d", srp, page)
 			}
-			h, ferr := s.fetchViaCurl(ctx, srp)
+			h, ferr := s.fetchTeamVelocityPage(ctx, srp, site)
 			if ferr != nil {
 				break
 			}
@@ -86,6 +88,29 @@ func (s Service) expandTeamVelocityInventory(ctx context.Context, pageURL, rende
 		return renderedHTML
 	}
 	return cards.String()
+}
+
+func (s Service) fetchTeamVelocityPage(ctx context.Context, pageURL string, site config.SiteConfig) (string, error) {
+	h, fetchErr := s.fetchViaCurl(ctx, pageURL)
+	if fetchErr == nil && countCards(h, teamVelocityCardSelector) > 0 {
+		return h, nil
+	}
+	for _, browser := range []Browser{s.Browser, s.AltBrowser} {
+		if browser == nil {
+			continue
+		}
+		rendered, renderErr := browser.Render(ctx, pageURL, site)
+		if renderErr == nil && countCards(rendered, teamVelocityCardSelector) > 0 {
+			return rendered, nil
+		}
+		if fetchErr == nil && renderErr != nil {
+			fetchErr = renderErr
+		}
+	}
+	if fetchErr != nil {
+		return "", fetchErr
+	}
+	return h, nil
 }
 
 // fetchViaCurl routes a fetch through the cookie-aware curl_cffi fetcher when

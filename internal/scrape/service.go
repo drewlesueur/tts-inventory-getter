@@ -426,7 +426,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				// hydrated page and short-circuit the walk with a dozen blanks.
 				h = expandSpaceAutoInventory(ctx, pageURL, h)
 				h = expandDealerDotComInventory(ctx, pageURL, h)
-				h = s.expandTeamVelocityInventory(ctx, pageURL, h)
+				h = s.expandTeamVelocityInventory(ctx, pageURL, h, site)
 				h = s.expandDealerOnInventory(ctx, pageURL, h)
 				h = s.expandDealerSyncInventory(ctx, pageURL, h)
 				cardCount := countCards(h, site.ListPage.CardSelector)
@@ -477,7 +477,7 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 		renderErr = nil
 		source = "browser"
 		html = expandIMotorInventory(ctx, pageURL, html)
-		html = s.expandTeamVelocityInventory(ctx, pageURL, html)
+		html = s.expandTeamVelocityInventory(ctx, pageURL, html, site)
 		html = s.expandDealerOnInventory(ctx, pageURL, html)
 		html = s.expandDealerSyncInventory(ctx, pageURL, html)
 		if b == primary && secondary != nil && site.ListPage.CardSelector != "" && countCards(html, site.ListPage.CardSelector) < 2 {
