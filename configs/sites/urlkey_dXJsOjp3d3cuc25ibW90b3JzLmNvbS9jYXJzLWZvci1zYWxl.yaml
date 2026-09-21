@@ -1,5 +1,5 @@
 name: url::www.snbmotors.com/cars-for-sale
-baseUrl: https://www.snbmotors.com/cars-for-sale
+baseUrl: https://www.snbmotors.com/cars-for-sale?SoldStatus=AvailableVehicles
 listPage:
     waitSelectors:
         - li.vehicle-snapshot
@@ -32,5 +32,9 @@ regex:
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    notes: CarsForSale dealer platform; uses PageNumber/PageSize pagination.
+    notes: 'CarsForSale dealer platform; uses PageNumber/PageSize pagination.
+        The SoldStatus dropdown defaults to AllVehicles, so the bare /cars-for-sale
+        URL returns SOLD cars too (117 vs 40 available on 2026-09-19). baseUrl pins
+        SoldStatus=AvailableVehicles; cmd/snb-sync does the same and aborts if the
+        selected option is not AvailableVehicles. Do not drop the query param.'
     discoveredAt: "2026-09-01T00:00:00Z"

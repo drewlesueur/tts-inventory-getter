@@ -167,11 +167,40 @@ def try_brave_cdp(url: str):
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = ctx.new_page()
             try:
+                # Chrome throttles timers in background tabs, so async inventory
+                # widgets (DealerCenter's DWS_Async_Vehicle_Listing, for one) never
+                # fire their render and page.content() returns a card-less shell.
+                # Foregrounding the tab is what makes them hydrate.
+                try:
+                    page.bring_to_front()
+                except Exception:
+                    pass
                 # Slow dealer sites through the VPN tunnel routinely take 30-40s
                 # to domcontentloaded; 45s cut them off at the edge.
                 resp = page.goto(url, wait_until="domcontentloaded", timeout=90000)
                 page.wait_for_timeout(5000)
-                html = page.content()
+
+                def content():
+                    """page.content() throws while a navigation is in flight.
+
+                    Cloudflare's interstitial redirects itself, so a naive call
+                    raises "Unable to retrieve content because the page is
+                    navigating" and we'd abandon a browser that was about to be
+                    let through. Settle the page first, then retry.
+                    """
+                    for attempt in range(4):
+                        try:
+                            return page.content()
+                        except Exception as exc:
+                            if "navigating" not in str(exc):
+                                raise
+                            try:
+                                page.wait_for_load_state("domcontentloaded", timeout=15000)
+                            except Exception:
+                                page.wait_for_timeout(2000)
+                    return page.content()
+
+                html = content()
                 status = resp.status if resp else 0
                 # Cloudflare answers the navigation with 403 and its "Just a
                 # moment..." interstitial, then swaps in the real page a few
@@ -181,7 +210,7 @@ def try_brave_cdp(url: str):
                     if not is_blocked(html):
                         break
                     page.wait_for_timeout(2500)
-                    html = page.content()
+                    html = content()
             finally:
                 page.close()
         if is_blocked(html) or (status >= 400 and status != 403):
