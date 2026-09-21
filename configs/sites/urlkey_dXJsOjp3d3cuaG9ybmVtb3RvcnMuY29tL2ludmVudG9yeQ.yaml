@@ -1,0 +1,39 @@
+name: url::www.hornemotors.com/inventory
+baseUrl: https://www.hornemotors.com/inventory
+listPage:
+    waitSelectors:
+        - .hm-vehicle-card
+    cardSelector: .hm-vehicle-card
+    titleSelector: h3
+    urlSelector: a[href*='/inventory/']
+    stockSelector: .hm-stock
+    priceSelector: .hm-price
+    mileageSelector: .hm-mileage
+    imageSelector: img
+    totalSelector: ""
+    pagination:
+        type: none
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    skip: true
+    imageSelectors: []
+    vinSelector: '[itemprop=''vehicleIdentificationNumber'']'
+    stockSelector: .hm-stock
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: 'hornemotors: Vite/React SPA - /inventory is a 2KB shell that needs ~30s
+        of browser hydration. fetchHorneMotorsInventoryHTML (internal/scrape/hornemotors.go)
+        calls GET /api/inventory?status=available&sortBy=price_asc&limit=500 over plain
+        HTTP instead: whole lot in one response, no browser, no VPN. The literal string
+        "hornemotors" in these notes is load-bearing - it is what routes the fetch.
+        status=available is the site sold filter; do not drop it.'
+    discoveredAt: "2026-09-21T00:00:00Z"
