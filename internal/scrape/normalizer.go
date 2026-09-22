@@ -42,6 +42,16 @@ var specTrailingLabelRe = regexp.MustCompile(`(?i)(miles|mileage|odometer|engine
 
 var mileageLabelRe = regexp.MustCompile(`(?i)^\s*(?:mileage|miles|odometer)\s*[:#\-]?\s*`)
 
+// Model words that are never a complete model name by themselves, so the token
+// after them belongs to the model too: "Model Y", "Grand Cherokee", "Santa Fe".
+// Deliberately short — a word only belongs here when keeping it alone would be
+// wrong for every make that uses it.
+var modelNeedsNextWord = map[string]bool{
+	"MODEL": true,
+	"GRAND": true,
+	"SANTA": true,
+}
+
 const minImageDimension = 300
 
 func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem {
@@ -129,6 +139,13 @@ func NormalizeItem(baseURL string, item model.InventoryItem) model.InventoryItem
 			}
 			if item.Model == "" {
 				item.Model = parts[start+1]
+				// Some model names are meaningless without their second word:
+				// "2022 Tesla Model Y" would otherwise ship as model "Model",
+				// collapsing Model Y / 3 / X / S into one name. Only extend for
+				// tokens that are never a complete model on their own.
+				if len(parts) > start+2 && modelNeedsNextWord[strings.ToUpper(item.Model)] {
+					item.Model = item.Model + " " + parts[start+2]
+				}
 			}
 		}
 	}
