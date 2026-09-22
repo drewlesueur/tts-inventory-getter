@@ -1,0 +1,48 @@
+name: url::mountainautoslc.com/inventory
+# AngularJS SRP (ng-repeat / vm.*) served off themes.dealercdn.com. All 35 vehicles
+# render in one response: ?PageSize=200 and ?page=2 both return the SAME 35 cards,
+# so there is no pagination to walk - do not add a pager, it would re-scrape page 1.
+#
+# Every card carries a <dl class="product__description"> pair list whose <dt> labels
+# are Engine / Mileage / Transmission / Exterior Color / Drive / Interior Color /
+# VIN / Stock NO, hence the :contains() selectors below.
+#
+# The SRP shows NO price - the only "$" amounts on it belong to the price-range
+# filter dropdown. Price lives on the VDP (.product-price h2, e.g. "$42,990"), so
+# detail fetching stays ON for this site. Photos are sparse at source: just 1 of 35
+# cards had a real listing image, the rest are /assets/img/noimage_800.png.
+baseUrl: https://mountainautoslc.com/inventory
+listPage:
+    waitSelectors:
+        - .product--detailed
+    cardSelector: .product--detailed
+    titleSelector: .product__title
+    urlSelector: .product__title a
+    stockSelector: dl.product__description:contains('Stock NO') dd
+    priceSelector: ""
+    mileageSelector: dl.product__description:contains('Mileage') dd
+    imageSelector: img[src*='images.dealerwebsite.com'], img[ng-src*='images.dealerwebsite.com']
+    totalSelector: ""
+    pagination:
+        type: none
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors:
+        - img[src*='images.dealerwebsite.com']
+        - img[ng-src*='images.dealerwebsite.com']
+    vinSelector: dl.product__description:contains('VIN') dd
+    stockSelector: dl.product__description:contains('Stock NO') dd
+regex:
+    stock:
+        - (?i)stock\s*(?:no|number|#)?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: AngularJS storefront on dealercdn/dealerwebsite.com; single page of 35,
+        pagination params are ignored; price only on the VDP.
+    discoveredAt: "2026-09-22T00:00:00Z"
