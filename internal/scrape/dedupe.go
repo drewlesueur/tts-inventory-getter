@@ -39,7 +39,69 @@ func Dedupe(items []model.InventoryItem) []model.InventoryItem {
 		seen[k] = len(out)
 		out = append(out, it)
 	}
+	return mergeWeakDuplicatesByURL(out)
+}
+
+// mergeWeakDuplicatesByURL folds an item that has no stock number and no VIN
+// into one that does, when both point at the same vehicle detail page.
+//
+// dedupeKey is a priority ladder — stock, then VIN, then URL — so the two copies
+// of one vehicle can end up under different keys and never collide. Sites that
+// render cards *and* ship a JSON blob produce exactly that: drivenmotion.com
+// yielded 826 items for 413 cars, the blob copies keyed "stock:C3106AI" and the
+// card copies keyed "url:…" off the very same VDP link.
+//
+// Only a keyless ("weak") item is ever merged away, so two fully identified
+// vehicles can never be collapsed. Items that already share a URL and lack any
+// identity were being merged by the URL key before this ran, so no new
+// collapsing risk is introduced here.
+func mergeWeakDuplicatesByURL(items []model.InventoryItem) []model.InventoryItem {
+	strongByURL := make(map[string]int, len(items))
+	for i, it := range items {
+		if !hasIdentity(it) {
+			continue
+		}
+		if u := canonicalURLKey(it.URL); u != "" {
+			if _, dup := strongByURL[u]; !dup {
+				strongByURL[u] = i
+			}
+		}
+	}
+	if len(strongByURL) == 0 {
+		return items
+	}
+	drop := make(map[int]bool)
+	for i, it := range items {
+		if hasIdentity(it) {
+			continue
+		}
+		u := canonicalURLKey(it.URL)
+		if u == "" {
+			continue
+		}
+		if idx, ok := strongByURL[u]; ok {
+			items[idx] = mergeInventoryItem(items[idx], it)
+			drop[i] = true
+		}
+	}
+	if len(drop) == 0 {
+		return items
+	}
+	out := make([]model.InventoryItem, 0, len(items)-len(drop))
+	for i, it := range items {
+		if !drop[i] {
+			out = append(out, it)
+		}
+	}
 	return out
+}
+
+// hasIdentity reports whether an item carries a stock number or a VIN — the
+// identifiers dedupeKey trusts ahead of the URL.
+func hasIdentity(it model.InventoryItem) bool {
+	return strings.TrimSpace(it.StockID) != "" ||
+		strings.TrimSpace(it.Stock) != "" ||
+		strings.TrimSpace(it.VIN) != ""
 }
 
 // vinsConflict reports whether both items carry a VIN and the VINs differ.

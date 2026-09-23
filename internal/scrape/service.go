@@ -997,6 +997,15 @@ func extractNextDataPageURLs(pageURL, html string) []string {
 			PageProps struct {
 				Page      int `json:"page"`
 				PageCount int `json:"pageCount"`
+				// Some Next.js storefronts (drivenmotion.com) ship no pageCount
+				// at all — only a grand total and one page of results — so the
+				// page count has to be derived from those instead.
+				Inventory struct {
+					Meta struct {
+						Total int `json:"total"`
+					} `json:"meta"`
+					Results []json.RawMessage `json:"results"`
+				} `json:"inventory"`
 			} `json:"pageProps"`
 		} `json:"props"`
 	}
@@ -1004,6 +1013,13 @@ func extractNextDataPageURLs(pageURL, html string) []string {
 		return nil
 	}
 	total := root.Props.PageProps.PageCount
+	if total <= 0 {
+		if perPage := len(root.Props.PageProps.Inventory.Results); perPage > 0 {
+			if grand := root.Props.PageProps.Inventory.Meta.Total; grand > perPage {
+				total = (grand + perPage - 1) / perPage
+			}
+		}
+	}
 	cur := root.Props.PageProps.Page
 	if cur <= 0 {
 		cur = 1

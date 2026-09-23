@@ -1,0 +1,46 @@
+name: url::www.drivenmotion.com/inventory
+# Next.js storefront (Overfuel). NO bot protection: plain curl returns HTTP 200
+# in ~1.5s from any IP, no Cloudflare/DataDome headers or challenge markers, so
+# the cloud scrapes this one directly - it needs no cache push and no VPN.
+#
+# Inventory lives in __NEXT_DATA__ at props.pageProps.inventory.results (25 per
+# page) with the grand total at props.pageProps.inventory.meta.total (413).
+# There is NO pageCount field and the pager renders no ?page= anchors at all,
+# so extractNextDataPageURLs derives the page count from total/len(results);
+# ?page=N is honoured server-side.
+baseUrl: https://www.drivenmotion.com/inventory
+listPage:
+    waitSelectors:
+        - .srp-card
+    cardSelector: .srp-card
+    titleSelector: h2, h3
+    urlSelector: a[href*='/used-cars/']
+    stockSelector: ""
+    priceSelector: '[class*=''price'']'
+    mileageSelector: '[class*=''mileage'']'
+    imageSelector: img
+    totalSelector: ""
+    pagination:
+        type: page_number
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 25
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    skip: true
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: 'Next.js/Overfuel SRP; unprotected (plain HTTP 200). Vehicles come from
+        the __NEXT_DATA__ blob - vin, stocknumber, year, make, model, trim, price,
+        mileage, photos[] and a relative url are all present, so detail pages are
+        skipped. Pagination is derived from inventory.meta.total.'
+    discoveredAt: "2026-09-23T00:00:00Z"
