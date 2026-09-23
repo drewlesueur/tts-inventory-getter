@@ -17,7 +17,7 @@ func TestDrivenMotionStoreFor(t *testing.T) {
 		{"https://www.drivenmotion.com/inventory/thornton", 183, true},
 		{"https://www.drivenmotion.com/inventory/greeley/", 184, true},
 		{"https://www.drivenmotion.com/inventory/rio-rancho", 185, true},
-		{"https://www.drivenmotion.com/inventory", 0, false},  // all-stores URL
+		{"https://www.drivenmotion.com/inventory", 0, false},        // all-stores URL
 		{"https://www.drivenmotion.com/inventory/denver", 0, false}, // unknown store
 	}
 	for _, c := range cases {
