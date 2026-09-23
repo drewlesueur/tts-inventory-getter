@@ -1,0 +1,53 @@
+name: url::www.markmillersubarumidtown.com/searchall.aspx
+# NEW + USED IN ONE PAGE. DealerOn exposes a combined search at /searchall.aspx
+# (pageId 4119176): 291 vehicles = 215 new (/new-inventory) + 76 used
+# (/used-inventory), verified against the API's TotalCount for each page.
+# /certified-inventory (12) is a subset of used, and /searchnused.aspx just
+# 301s to /used-inventory — neither is the combined view.
+#
+# DealerOn "Cosmos" SPA — same platform and dealer group as
+# markmillersubarusouthtowne.com, so the same selectors apply. The SRP ships only
+# skeleton cards (.vehicle-card--mod.skeleton); real inventory comes from the
+# paged JSON API whose dealerId/pageId are published in dealeron_tagging_data,
+# which expandDealerOnInventory (dealeron.go) walks to synthesize
+# .dealeron-api-card elements. Both trigger markers (dealeron_tagging_data,
+# vhcliaa) are present on this host.
+#
+# NOT bot-protected: plain curl returns HTTP 200 in ~1.8s (nginx, no Cloudflare
+# or DataDome headers, no challenge markers), so the cloud can scrape it directly —
+# no cache push, no VPN.
+#
+# New cars often have VehicleInternetPrice 0 → price blank on the card; detail
+# fetching (default-on) fills price/specs from the VDP.
+baseUrl: https://www.markmillersubarumidtown.com/searchall.aspx
+listPage:
+    waitSelectors:
+        - .dealeron-api-card
+    cardSelector: .dealeron-api-card
+    titleSelector: .dealeron-api-title
+    urlSelector: a.dealeron-api-url
+    stockSelector: .dealeron-api-stock
+    priceSelector: .dealeron-api-price
+    mileageSelector: .dealeron-api-mileage
+    imageSelector: img.dealeron-api-image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerOn Cosmos SPA; inventory via srp/vehicles JSON API, expanded in Go (dealeron.go).
+    discoveredAt: "2026-09-23T00:00:00Z"
