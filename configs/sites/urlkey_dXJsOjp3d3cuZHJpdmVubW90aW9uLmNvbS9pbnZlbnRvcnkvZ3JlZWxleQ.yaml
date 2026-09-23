@@ -1,0 +1,53 @@
+name: url::www.drivenmotion.com/inventory/greeley
+# Drive N-Motion Greeley (dealer_id 184) — ONE STORE of a three-store Next.js
+# storefront. /inventory serves all 412 vehicles (Thornton 154, Greeley 161,
+# Rio Rancho 97); this config carves out just this location.
+#
+# The split needs the path form registered, not the query form:
+#   - ?dealer_id[]=184 filters correctly, but CacheKeyForSourceURL DROPS the
+#     query, so all three stores would share one cache key and overwrite
+#     each other.
+#   - /inventory/greeley gives a distinct key, but the Next.js catch-all
+#     ignores the segment and serves all 412 unfiltered.
+# fetchDrivenMotionInventoryHTML (drivenmotion.go) bridges the two: it reads the
+# store from the path and walks the filtered query, dropping any vehicle whose
+# dealer_id is not 184, plus anything not status=active or flagged wholesale.
+# The literal string "drivenmotion-store" in the notes below is load-bearing —
+# it is what routes the fetch.
+#
+# Unprotected: plain curl returns HTTP 200 even with no User-Agent, so the cloud
+# scrapes this directly — no cache push, no VPN. Register the URL above.
+baseUrl: https://www.drivenmotion.com/inventory/greeley
+listPage:
+    waitSelectors:
+        - .srp-card
+    cardSelector: .srp-card
+    titleSelector: h2
+    urlSelector: a[href*='/used-cars/']
+    stockSelector: .dm-stock
+    priceSelector: .price
+    mileageSelector: .mileage
+    imageSelector: img
+    totalSelector: ""
+    pagination:
+        type: none
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    skip: true
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+regex:
+    stock:
+        - (?i)stock\s*#?[:\-]?\s*([a-z0-9\-]+)
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: 'drivenmotion-store: Greeley (dealer_id 184). Every page of the filtered
+        query is walked in Go, so the config needs no pagination. Expected ~161 vehicles.'
+    discoveredAt: "2026-09-24T00:00:00Z"

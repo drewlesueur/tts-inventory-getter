@@ -401,6 +401,17 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 	var html string
 	var renderErr error
 	source := "none"
+	if strings.Contains(strings.ToLower(site.Discovery.Notes), "drivenmotion-store") {
+		if h, err := fetchDrivenMotionInventoryHTML(ctx, pageURL); err == nil {
+			if s.Logger != nil {
+				s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "go_drivenmotion_store"), zap.Int("cardCount", countCards(h, site.ListPage.CardSelector)))
+			}
+			return h, nil
+		} else if s.Logger != nil {
+			s.Logger.Warn("Go Drive N-Motion store fetch failed; falling back", zap.String("url", pageURL), zap.Error(err))
+		}
+	}
+
 	if strings.Contains(strings.ToLower(site.Discovery.Notes), "hornemotors") {
 		if h, err := fetchHorneMotorsInventoryHTML(ctx, pageURL); err == nil {
 			if s.Logger != nil {
