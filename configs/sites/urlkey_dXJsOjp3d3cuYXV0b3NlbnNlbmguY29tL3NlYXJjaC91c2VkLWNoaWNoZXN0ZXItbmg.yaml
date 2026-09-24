@@ -1,62 +1,45 @@
 name: url::www.autosensenh.com/search/used-chichester-nh
-# Dealer eProcess platform (cdn.dealereprocess.org assets), "carbon" SRP theme —
-# the same platform as hornemazdaavondale but a newer template: cards are
-# .vehicle_item, not .srp_vehicle_item_container.
+# 2026-09-24: this dealer MIGRATED off Dealer eProcess onto Overfuel, so the
+# previous carbon-theme config (.vehicle_item cards, synthesized ?p=N pages)
+# matched nothing. It scraped 25 of 85 for days: the eProcess pager was gone, so
+# page 1 was read by a fallback and every synthesized page URL returned zero
+# cards. Same shape as srprimeauto now.
 #
-# Behind Cloudflare, and harder than horne: a plain fetch gets a 403 block shell
-# and Camoufox is refused too. Only the user's real browser (Brave over CDP,
-# fetch_page.py's third strategy) gets through.
+# Overfuel (static.overfuel.com) on Next.js: the full record for every vehicle
+# is in __NEXT_DATA__ at props.pageProps.inventory.results, which
+# NextDataExtractor walks — the DOM selectors below are a backstop and for card
+# counting. inventory.meta.total carries the count (82 at time of writing),
+# 25 per page over a <link rel="next"> chain.
 #
-# Pagination: 79 vehicles, 12 per page = 7 pages. This theme's pager is a text
-# input plus two JS arrow <div>s — no crawlable hrefs at all — so the page URLs
-# are synthesized by extractDealerEProcessPageURLs from
-# .pagination_settings__page_count and served as ?p=N.
-# (?ct=12/24/36/48 also sets page size, but only those four values; ?ct=all and
-# ?ct=100 are ignored, and the source URL we are handed carries no query.)
+# The registered URL (/search/used-chichester-nh) is kept as baseUrl so the
+# cache key does not move; the site redirects it to the canonical
+# /used-cars-in-chichester-nh, whose rel=next chain the walker then follows.
 #
-# Field notes:
-#  * Title is h2.vehicle_title; the enclosing widget div carries the vehicle id,
-#    so don't anchor on its class.
-#  * Pricing is a <dl> of "Price" -> "Transparent Price includes Dealer Admin
-#    Fee". The LAST dd.vehicle_price is what the buyer pays ($4,798 vs the
-#    $4,000 pre-fee figure) and matches the card's own JSON-LD offer price.
-#  * Stock and mileage are rows of table.srp_details, selected by their label
-#    with :contains() since the row order is not guaranteed.
-#  * VIN rides on the .simpwebchat_srp_item data-vin inside the card
-#    (card-attribute fallback), so every card is complete and the per-item
-#    detail gate skips the VDP fetches on its own.
-#  * Card photos are lazy-loaded on data-src; img.loopslider__image is the
-#    gallery, in order, so the first one is the primary photo.
+# Unlike srprimeauto, this dealer DOES publish stock numbers (no nulls in the
+# feed), so stockSelector is safe here — mapping a blank one would give every
+# vehicle the same id and dedupeKey would collapse the page to one item.
 baseUrl: https://www.autosensenh.com/search/used-chichester-nh/
 listPage:
     waitSelectors:
-        - .vehicle_item
-    cardSelector: .vehicle_item
-    titleSelector: h2.vehicle_title
-    urlSelector: a[href*='/auto/']
-    # Quoted: an unquoted " #" in a YAML plain scalar starts a comment and
-    # would truncate this to tr:contains("Stock.
-    stockSelector: 'tr:contains("Stock #") .details-overview_data'
-    # Bold = the sale price, same as hornemazdaavondale. :last-of-type also
-    # works on today's markup but breaks the moment a trailing rebate row is
-    # added after the final price, which is what it does on new-car cards.
-    priceSelector: 'dd.vehicle_price[style*=''font-weight: bold'']'
-    mileageSelector: tr:contains("Mileage") .details-overview_data
-    # Not a bare 'img' fallback: each card also carries a 360-video play
-    # button (gcbimages…play_video_360.png) that would win the pick.
-    imageSelector: img.loopslider__image
+        - '[data-cy=''vehicle-card'']'
+    cardSelector: '[data-cy=''vehicle-card'']'
+    titleSelector: h2
+    urlSelector: a[href*='/inventory/']
+    stockSelector: .srp-stocknum
+    priceSelector: .label-price
+    mileageSelector: .srp-miles .ms-auto
+    imageSelector: img.img-srp
     totalSelector: ""
     pagination:
         type: ""
         nextSelector: ""
         loadMoreSelector: ""
-        maxPages: 12
+        maxPages: 20
         infiniteScroll: false
         scrollMaxAttempts: 0
         clickMaxAttempts: 0
 detailPage:
-    imageSelectors:
-        - img.loopslider__image
+    imageSelectors: []
     vinSelector: ""
     stockSelector: ""
 regex:
@@ -65,5 +48,4 @@ regex:
     vin:
         - \b([A-HJ-NPR-Z0-9]{17})\b
 discovery:
-    notes: Dealer eProcess carbon SRP behind Cloudflare; ?p=N pagination, 12 per page.
-    discoveredAt: "2026-09-12T00:00:00Z"
+    discoveredAt: "2026-08-21T16:00:00Z"
