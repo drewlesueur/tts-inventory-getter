@@ -54,10 +54,12 @@ func TestExtractDealerEProcessPageURLs_SinglePage(t *testing.T) {
 	}
 }
 
-// Guards the autosensenh config's selectors against the shape of a real card:
-// stock and mileage are labelled table rows, the buyer's price is the *last*
-// of two <dd class="vehicle_price">, the VIN rides on a chat widget's data-vin,
-// and the photo is lazy-loaded on data-src next to a 360-video play button.
+// Guards the autosensenh config against the shape of a real Overfuel card.
+// The dealer migrated off eProcess on 2026-09-24, so this no longer exercises
+// the carbon theme (the pager tests above still do, for hornemazdaavondale).
+// The fixture keeps the traits that broke naive selectors: the title is a bare
+// h2 inside the link, the stock number is prefixed with a "Stock #" label and
+// split by a React comment node, and mileage and price are anchor text.
 func TestAutosenseConfigExtractsFullCard(t *testing.T) {
 	path := filepath.Join("..", "..", "configs", "sites",
 		"urlkey_dXJsOjp3d3cuYXV0b3NlbnNlbmguY29tL3NlYXJjaC91c2VkLWNoaWNoZXN0ZXItbmg.yaml")
@@ -65,45 +67,40 @@ func TestAutosenseConfigExtractsFullCard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load autosensenh config: %v", err)
 	}
-	html := `<div class="vehicle_item" data-vehicle_id="122961395">
-  <h2 class="vehicle_title"><a href="/auto/used-2013-mazda-mazda3-i-sv-chichester-nh/122961395/">Used 2013 Mazda Mazda3 i SV</a></h2>
-  <img src="//gcbimages.storage.googleapis.com/vidbtn/play_video_360.png" alt="Button for Video">
-  <img class="lazyload-target loopslider__image" data-src="https://cloudflareimages.dealereprocess.com/resrc/images/c_limit/v1/dvp/3886/54603238245/Used-2013-Mazda-Mazda3-iSV-ID54603238245-aHR0cDovL2V4YW1wbGU=">
-  <div class="simpwebchat_srp_item" data-vin="JM1BL1TG1D1779942" data-stock_no="N1484A"></div>
-  <dl><dt>Price</dt><dd class="vehicle_price" style=" color: #000000;">$4,000</dd>
-      <dt>Transparent Price includes Dealer Admin Fee</dt>
-      <dd class="vehicle_price" style=" color: #34C200;font-weight: bold;">$4,798</dd></dl>
-  <table class="srp_details"><tbody>
-    <tr><td class="details-overview_title bold">Mileage</td><td class="details-overview_data">188,127 </td></tr>
-    <tr><td class="details-overview_title bold">Stock #</td><td class="details-overview_data">N1484A</td></tr>
-    <tr><td class="details-overview_title bold">VIN</td><td class="details-overview_data">JM1BL1TG1D1779942</td></tr>
-  </tbody></table>
-</div>` + eProcessPager
+	html := `<div data-cy="vehicle-card" class="srp-card overflow-hidden h-100 conditionUsed card">
+  <a data-cy="inventory-link" title="2017 Audi Q7 3.0T Premium Plus" href="/inventory/used-2017-audi-q7-3-0t-premium-plus-wa1laaf74hd031500-in-chichester-nh">
+    <img class="img-srp d-block" src="https://static.overfuel.com/photos/2334/2018860/e3635c78-thumb.webp">
+    <h2 class="h5 m-0 font-weight-bold text-truncate notranslate">2017 Audi Q7</h2>
+  </a>
+  <small class="opacity-75 srp-stocknum"><a href="/inventory/used-2017-audi-q7-3-0t-premium-plus-wa1laaf74hd031500-in-chichester-nh">Stock # <!-- -->N1587</a></small>
+  <div class="srp-miles opacity-75 d-flex w-100 mt-1 col-12">
+    <div class="text-truncate">3.0T Premium Plus</div>
+    <div class="ps-2 text-nowrap ms-auto text-end"><a href="/inventory/used-2017-audi-q7-3-0t-premium-plus-wa1laaf74hd031500-in-chichester-nh">102,493<!-- --> <!-- -->miles</a></div>
+  </div>
+  <div class="d-flex align-items-center mb-3 border-top pt-2 srpPriceContainer">
+    <span class="h4 font-weight-bold mt-3 label-price"><a href="/inventory/used-2017-audi-q7-3-0t-premium-plus-wa1laaf74hd031500-in-chichester-nh">$13,250</a></span>
+  </div>
+</div>`
 
 	items, errs := (DOMExtractor{}).Extract(context.Background(), html, site.BaseURL, site)
 	if len(errs) != 0 || len(items) != 1 {
 		t.Fatalf("expected one vehicle, got items=%+v errors=%+v", items, errs)
 	}
 	it := items[0]
-	if it.Title != "Used 2013 Mazda Mazda3 i SV" || it.StockID != "N1484A" || it.VIN != "JM1BL1TG1D1779942" {
-		t.Fatalf("unexpected identity fields: %+v", it)
+	if it.Title != "2017 Audi Q7" {
+		t.Fatalf("title = %q", it.Title)
 	}
-	if it.Price != "$4,798" || it.Mileage != "188,127" {
-		t.Fatalf("price/mileage = %q/%q, want the post-fee price and the odometer", it.Price, it.Mileage)
+	// The label and React comment node must not end up in the stock id.
+	if it.StockID != "N1587" {
+		t.Fatalf("stock = %q, want N1587 with the \"Stock #\" label stripped", it.StockID)
 	}
-	if !strings.HasPrefix(it.PrimaryImage, "https://cloudflareimages.dealereprocess.com/") {
-		t.Fatalf("primary image = %q, want the vehicle photo, not the video button", it.PrimaryImage)
+	if it.Price != "$13,250" || !strings.HasPrefix(it.Mileage, "102,493") {
+		t.Fatalf("price/mileage = %q/%q", it.Price, it.Mileage)
 	}
-	if it.Year != "2013" || it.Make != "Mazda" || it.Model != "Mazda3" {
-		t.Fatalf("year/make/model = %q/%q/%q", it.Year, it.Make, it.Model)
+	if !strings.HasPrefix(it.PrimaryImage, "https://static.overfuel.com/") {
+		t.Fatalf("primary image = %q", it.PrimaryImage)
 	}
-	// Every field is on the card, so the per-item gate must skip the VDP fetch —
-	// each one would cost a Cloudflare-guarded browser render.
-	if !detailFetchWouldAddNothing(it) {
-		t.Fatal("expected the card to be complete enough to skip the detail fetch")
-	}
-	next := extractNextPageURLs(site.BaseURL, html, site)
-	if len(next) != 6 || !strings.HasSuffix(next[0], "?p=2") {
-		t.Fatalf("next pages = %v", next)
+	if !strings.Contains(it.URL, "/inventory/used-2017-audi-q7") {
+		t.Fatalf("url = %q", it.URL)
 	}
 }
