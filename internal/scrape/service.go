@@ -465,6 +465,27 @@ func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.
 				if s.Logger != nil {
 					s.Logger.Info("HTTP response is an unhydrated shell; falling back to browser", zap.String("url", pageURL), zap.String("cardSelector", site.ListPage.CardSelector))
 				}
+				// Retry through the Python layer with its HTTP path disabled
+				// before dropping to the Go browsers. Sites that firewall this
+				// machine's IP are only reachable through the user's browser,
+				// so the Go browsers see a block page and the real cards are
+				// lost — signatureautoutah hydrates 424 cards this way.
+				if rf, ok := any(s.Fetcher).(interface {
+					FetchRendered(context.Context, string, string) (string, error)
+				}); ok {
+					rh, rerr := rf.FetchRendered(ctx, pageURL, cookieHeader(cookies))
+					if s.Logger != nil {
+						s.Logger.Info("rendered retry", zap.String("url", pageURL), zap.Int("htmlLen", len(rh)), zap.Int("cards", countCards(rh, site.ListPage.CardSelector)), zap.Error(rerr))
+					}
+					if rerr == nil {
+						if rc := countCards(rh, site.ListPage.CardSelector); rc > 0 {
+							if s.Logger != nil {
+								s.Logger.Info("list html source", zap.String("url", pageURL), zap.String("source", "curl_rendered"), zap.Int("cardCount", rc))
+							}
+							return rh, nil
+						}
+					}
+				}
 			}
 			if err != nil {
 				// The Python fetch layer failed (missing binary, script error, or

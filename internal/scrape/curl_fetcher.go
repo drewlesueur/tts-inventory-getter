@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // CurlFetcher delegates HTTP fetches to the Python curl_cffi script which
@@ -39,43 +41,80 @@ func (c *CurlFetcher) Fetch(ctx context.Context, rawURL string) (string, error) 
 }
 
 func (c *CurlFetcher) FetchWithCookie(ctx context.Context, rawURL, cookieHeader string) (string, error) {
-	// cookieHeader is "name=value; name2=value2" — extract the datadome value
-	cookie := ""
+	return c.fetchWithCookie(ctx, rawURL, datadomeFromHeader(cookieHeader))
+}
+
+// datadomeFromHeader pulls the datadome value out of a "a=1; b=2" cookie header.
+func datadomeFromHeader(cookieHeader string) string {
 	for _, part := range strings.Split(cookieHeader, ";") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "datadome=") {
-			cookie = strings.TrimPrefix(part, "datadome=")
-			break
+			return strings.TrimPrefix(part, "datadome=")
 		}
 	}
-	return c.fetchWithCookie(ctx, rawURL, cookie)
+	return ""
 }
 
+// FetchRendered re-fetches a page with the fast HTTP path disabled, forcing the
+// Python layer into a real browser. Client-rendered inventory (DealerCenter's
+// dws-* widgets) answers plain HTTP with a card-less shell that looks like a
+// success, so a shell is only worth retrying in a browser that can hydrate it.
+func (c *CurlFetcher) FetchRendered(ctx context.Context, rawURL, cookieHeader string) (string, error) {
+	// Hydrating a client-rendered SRP in a real browser takes far longer than a
+	// plain HTTP GET, so don't inherit a deadline sized for the latter.
+	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) < renderedFetchTimeout {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), renderedFetchTimeout)
+		defer cancel()
+	}
+	return c.fetchWithCookieOpts(ctx, rawURL, datadomeFromHeader(cookieHeader), true)
+}
+
+// renderedFetchTimeout covers a Cloudflare challenge (~80s) plus hydration.
+const renderedFetchTimeout = 180 * time.Second
+
 func (c *CurlFetcher) fetchWithCookie(ctx context.Context, rawURL, cookie string) (string, error) {
+	return c.fetchWithCookieOpts(ctx, rawURL, cookie, false)
+}
+
+func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie string, skipHTTP bool) (string, error) {
 	args := []string{c.ScriptPath, rawURL}
 	if cookie != "" {
 		args = append(args, cookie)
 	}
 
 	cmd := exec.CommandContext(ctx, c.PythonBin, args...)
+	if skipHTTP {
+		cmd.Env = append(os.Environ(), "FETCH_SKIP_HTTP=1")
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// In rendered mode the plain-HTTP fallback is worse than useless: the
+	// caller escalated precisely because HTTP returned a card-less shell, and
+	// falling back hands that same shell back as a success.
+	onErr := func(err error) (string, error) {
+		if skipHTTP {
+			return "", err
+		}
+		return c.fallback(ctx, rawURL, err)
+	}
+
 	runErr := cmd.Run()
 	if runErr != nil {
-		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi exec failed: %w — %s", runErr, strings.TrimSpace(stderr.String())))
+		return onErr(fmt.Errorf("curl_cffi exec failed: %w — %s", runErr, strings.TrimSpace(stderr.String())))
 	}
 
 	var result fetchPageResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi output parse failed: %w", err))
+		return onErr(fmt.Errorf("curl_cffi output parse failed: %w", err))
 	}
 	if result.Error != "" {
-		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi: %s", result.Error))
+		return onErr(fmt.Errorf("curl_cffi: %s", result.Error))
 	}
 	if result.Status >= 400 {
-		return c.fallback(ctx, rawURL, fmt.Errorf("curl_cffi fetch failed status=%d", result.Status))
+		return onErr(fmt.Errorf("curl_cffi fetch failed status=%d", result.Status))
 	}
 
 	// Save refreshed cookie back to the store

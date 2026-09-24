@@ -206,10 +206,34 @@ def try_brave_cdp(url: str):
                 # moment..." interstitial, then swaps in the real page a few
                 # seconds later — the navigation's status stays 403 either way.
                 # So wait for the challenge to clear and judge by content.
-                for _ in range(10):
+                # 2026-09-24: 10 rounds (~25s) was too short — hornemazdaavondale
+                # sat on the interstitial at 25s and served the real page at 60s,
+                # so every Cloudflare site failed at ~20s. Only challenged pages
+                # pay this wait; a clear page breaks on the first check.
+                for _ in range(32):
                     if not is_blocked(html):
                         break
                     page.wait_for_timeout(2500)
+                    html = content()
+
+                # Client-side inventory apps (DealerCenter's dws-* widgets)
+                # render their listings after load, so the flat 5s wait above
+                # returns a card-less shell: signatureautoutah came back with 0
+                # cards while the same page hand-fetched has 424. Wait for the
+                # DOM to stop growing rather than guess a fixed delay — a page
+                # that is already settled costs one extra poll.
+                # Require two consecutive unchanged reads: this page pauses
+                # mid-render, so breaking on the first stable size returned a
+                # 475KB half-hydrated document with 0 cards where the settled
+                # page is 652KB with 20.
+                prev, stable = -1, 0
+                for _ in range(20):
+                    size = len(html)
+                    stable = stable + 1 if size == prev else 0
+                    if stable >= 2:
+                        break
+                    prev = size
+                    page.wait_for_timeout(2000)
                     html = content()
             finally:
                 page.close()
@@ -320,8 +344,15 @@ async def try_camoufox(url: str):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
+    # The Go layer sets FETCH_SKIP_HTTP=1 to retry a page whose HTTP response
+    # came back as a card-less shell: curl_cffi "succeeds" on client-rendered
+    # inventory (DealerCenter dws-*) by returning HTML the cards never render
+    # into, so the only useful retry is one that skips straight to a browser.
+    import os as _os
+    skip_http = _os.environ.get("FETCH_SKIP_HTTP") == "1"
+
     # Strategy 1: fast path with existing cookie
-    if cookie:
+    if cookie and not skip_http:
         html, new_cookie = try_curl_cffi(url, cookie)
         if html:
             print(json.dumps({"html": html, "cookie": new_cookie or cookie, "status": 200}))
