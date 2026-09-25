@@ -235,6 +235,26 @@ def try_brave_cdp(url: str):
                     prev = size
                     page.wait_for_timeout(2000)
                     html = content()
+
+                # Lazy-rendering SRPs (usedvwaudi's React list renders ~50 of
+                # 533) only fill in as the page is scrolled, so a settled
+                # document is not necessarily a complete one. Drive it to the
+                # bottom until the scroll height stops growing — Camoufox
+                # already does this; the browser path did not, which is why
+                # the same URL yielded 525 one day and exactly 50 the next.
+                try:
+                    last_h = -1
+                    for _ in range(40):
+                        h_now = page.evaluate("document.body.scrollHeight")
+                        if h_now == last_h:
+                            break
+                        last_h = h_now
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        page.wait_for_timeout(1200)
+                    page.evaluate("window.scrollTo(0, 0)")
+                    html = content()
+                except Exception as exc:
+                    print(f"[brave] scroll skipped: {exc}", file=sys.stderr)
             finally:
                 page.close()
         if is_blocked(html) or (status >= 400 and status != 403):
