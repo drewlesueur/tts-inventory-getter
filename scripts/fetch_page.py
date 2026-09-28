@@ -119,6 +119,14 @@ def try_curl_cffi(url: str, cookie: str):
         headers["Cookie"] = f"datadome={cookie}"
 
     try:
+        # Separate connect and read budgets. A browser-extension VPN only
+        # proxies traffic inside the browser, so when a host is reachable *only*
+        # through it this client cannot connect at all — and a single 30s budget
+        # burned 30s on every page before falling through to Brave, which is
+        # most of why a 4-page CarsForSale walk took 28 minutes on 2026-09-28.
+        # Connect fails fast; reads still get the full budget.
+        resp = session.get(url, headers=headers, timeout=(6, 30))
+    except TypeError:
         resp = session.get(url, headers=headers, timeout=30)
     except Exception as e:
         print(f"[curl_cffi] error: {e}", file=sys.stderr)
@@ -243,10 +251,21 @@ def try_brave_cdp(url: str):
                 # already does this; the browser path did not, which is why
                 # the same URL yielded 525 one day and exactly 50 the next.
                 try:
+                    import time as _time
+
+                    scroll_deadline = _time.monotonic() + 45
                     last_h = -1
                     for _ in range(40):
                         h_now = page.evaluate("document.body.scrollHeight")
-                        if h_now == last_h:
+                        # Stop on *small* growth, not just zero growth: pages that
+                        # lazy-load images (Dealer.com) creep upward forever and
+                        # would otherwise burn the whole budget on every page of a
+                        # paginated walk, which timed out both Nelson Mazda sites.
+                        # Real card loading moves the height in large steps.
+                        if last_h > 0 and h_now - last_h < max(500, last_h * 0.02):
+                            break
+                        if _time.monotonic() > scroll_deadline:
+                            print("[brave] scroll budget reached", file=sys.stderr)
                             break
                         last_h = h_now
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
