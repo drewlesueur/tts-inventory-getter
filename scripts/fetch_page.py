@@ -56,7 +56,12 @@ def is_blocked(html: str) -> bool:
     # which a real dealer page never contains.
     if 'id="cf-error-details"' in html or "Attention Required! | Cloudflare" in html:
         return True
-    if len(html) < 20000 and "Just a moment..." in html and "/cdn-cgi/challenge-platform/" in html:
+    # 2026-09-29: the cap was 20000, but hornemazdaavondale's interstitial is
+    # ~28KB — it sailed through as a valid page, so the challenge wait never ran
+    # and the scrape reported "no inventory found" instead of clearing it. Real
+    # dealer SRPs run to hundreds of KB (horne's is 2.27MB), and both markers
+    # together never appear on one, so a much looser cap is still safe.
+    if len(html) < 200000 and "Just a moment..." in html and "/cdn-cgi/challenge-platform/" in html:
         return True
     return False
 
