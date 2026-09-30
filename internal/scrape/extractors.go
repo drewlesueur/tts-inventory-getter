@@ -97,6 +97,19 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 			// Dealr (dealrcloud) cards expose it only on the CarGurus badge.
 			item.VIN = validVINCandidate(firstAttr(s, "[data-cg-vin]", "data-cg-vin"))
 		}
+		if item.VIN == "" {
+			// DealerCenter's "layout-6" cards (pandaautogallery) carry it on the
+			// card container, prefixed: data-vehicle-id="vehicle-id-<VIN>".
+			// Nothing else on the card has it, and the regex fallback only sees
+			// text, so without stripping the prefix every VIN is lost.
+			// AddBack so the card element itself is considered: firstAttr only
+			// searches descendants, and here the attribute is on the card.
+			raw, ok := s.Attr("data-vehicle-id")
+			if !ok {
+				raw = firstAttr(s, "[data-vehicle-id]", "data-vehicle-id")
+			}
+			item.VIN = validVINCandidate(strings.TrimPrefix(strings.TrimSpace(raw), "vehicle-id-"))
+		}
 		normalized := NormalizeItem(pageURL, item)
 		if !looksLikeUsefulListing(normalized) {
 			return

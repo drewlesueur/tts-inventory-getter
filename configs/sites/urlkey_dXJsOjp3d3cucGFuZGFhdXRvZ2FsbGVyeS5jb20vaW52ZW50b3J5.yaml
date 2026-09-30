@@ -1,0 +1,56 @@
+name: url::www.pandaautogallery.com/inventory
+# DealerCenter DWS widget on WordPress (cdn.dealercenterwsstatic.net), the
+# "layout-6" listing template — a different card shape from signatureautoutah's.
+#
+# Behind Cloudflare: a direct fetch gets a hard 403 "Attention Required!" shell
+# (cf-ray, __cf_bm), not a solvable challenge, so this needs a US IP — the
+# Brave-over-CDP strategy with the VPN extension. Flag it protected; the cloud
+# will only manage it if that server's IP is accepted.
+#
+# All 28 vehicles render on the single /inventory/ page once it is scrolled, so
+# there is no pagination to walk. The widget's pager is JS-only with no hrefs,
+# and query params are ignored outright — ?page_no=2, ?pagesize=5, ?pagesize=100
+# and ?_page=2 all return the same full set, so do not try to page it.
+#
+# Field notes:
+#  * VIN rides on the card's data-vehicle-id ("vehicle-id-<VIN>"), picked up by
+#    the 17-char regex below; stock is data-sn / data-stock-number.
+#  * No priceSelector on purpose: the price span wraps a "*Fees Not Disclosed"
+#    <a>, and goquery .Text() would glue it on as "$132,700 *Fees Not Disclosed".
+#    The regex takes the first currency figure cleanly instead.
+baseUrl: https://www.pandaautogallery.com/inventory/
+listPage:
+    waitSelectors:
+        - .vehicle-container
+    cardSelector: .vehicle-container
+    titleSelector: a.vehicle-title
+    urlSelector: a.vehicle-title
+    stockSelector: ""
+    priceSelector: ""
+    mileageSelector: .vehicle-field-odometer .vehicle-info-value
+    imageSelector: img.vehicle-image
+    totalSelector: ""
+    pagination:
+        type: ""
+        nextSelector: ""
+        loadMoreSelector: ""
+        maxPages: 1
+        infiniteScroll: false
+        scrollMaxAttempts: 0
+        clickMaxAttempts: 0
+detailPage:
+    imageSelectors: []
+    vinSelector: ""
+    stockSelector: ""
+    # Cards carry every gate field and the VDPs sit behind the same CF block.
+    skip: true
+regex:
+    stock:
+        - (?i)stock\s*(?:number|#)?[:\-]?\s*([0-9]{3,8})
+    vin:
+        - \b([A-HJ-NPR-Z0-9]{17})\b
+discovery:
+    notes: DealerCenter DWS widget (layout-6) on WordPress; Cloudflare 403 from
+        non-US IPs, so fetch requires the Brave CDP VPN path. Single page, 28
+        vehicles, no working pagination params.
+    discoveredAt: "2026-09-30T00:00:00Z"
