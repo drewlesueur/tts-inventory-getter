@@ -1,0 +1,28 @@
+name: url::txworktrucks.com/all-inventory
+# Autodealers.Digital WordPress inventory. Large gallery data attributes push
+# the first title/VIN beyond discovery's 70,000-character HTML limit; use the
+# actual card and label/value selectors instead of a cached discovery guess.
+baseUrl: https://txworktrucks.com/all-inventory/
+listPage:
+    waitSelectors:
+        - .listing-vehicles-card .vehicle-title
+    cardSelector: .listing-vehicles-card
+    titleSelector: .vehicle-title
+    urlSelector: a[href^="/vehicles/"]
+    stockSelector: ".info-item:contains('Stock #') .info-item-valeu"
+    priceSelector: .display-price
+    mileageSelector: .info-item:contains('Mileage') .info-item-valeu
+    imageSelector: img
+    pagination:
+        # Match the service default: follow discovered pages with a bounded crawl.
+        maxPages: 20
+# Keep normal detail enrichment enabled for colour, engine and other specs.
+detailPage:
+    vinSelector: .data-vhs-info:contains('Vin') .subtitle-data-vhs-info
+    stockSelector: .data-vhs-info:contains('Stock') .subtitle-data-vhs-info
+    imageSelectors:
+        - .swiper-slide img
+regex:
+    stock: []
+    vin:
+        - '\b([A-HJ-NPR-Z0-9]{17})\b'
