@@ -29,6 +29,7 @@ type CarsCommerceConfig struct {
 	CCID        string `yaml:"ccid" json:"ccid"`
 	SearchKey   string `yaml:"searchKey" json:"searchKey"`
 	VehicleType string `yaml:"vehicleType" json:"vehicleType"`
+	VehicleTypes []string `yaml:"vehicleTypes,omitempty" json:"vehicleTypes,omitempty"`
 }
 
 type ListPageConfig struct {

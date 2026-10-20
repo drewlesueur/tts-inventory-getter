@@ -178,10 +178,13 @@ curl -X POST http://localhost:8080/v1/scrape/discover-flow \
 Discovered configs are cached in-process memory (not written to YAML); they are lost on restart and re-discovered on the next request.
 
 ## Site Adapters
-Riverton Acura's `/new-vehicles/` template uses its public Cars Commerce API
+Riverton Acura's `/new-vehicles/` and `/used-vehicles/` templates use its public Cars Commerce API
 instead of browser-rendered cards. The `carsCommerce` configuration supplies
-the dealer CCID, public website search key, and required vehicle type (`New`).
-The adapter preserves that type when the URL omits it, accepts the verified
+the dealer CCID, public website search key, and the page's vehicle types. The New
+template uses `vehicleType: New`; the Used template uses `vehicleTypes` to include
+both `Used` and `Certified Used`, matching the website's pre-owned page.
+The adapter preserves those defaults when the URL omits refinements, allows
+explicit type refinements to narrow that page's inventory, accepts the verified
 `idx=year_high_to_low` sort, and rejects conflicting or unsupported refinements
 rather than importing a broader inventory. It checks every returned type,
 vehicle identity and page count before returning items. Only templates with

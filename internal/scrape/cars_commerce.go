@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 )
 
 var carsCommerceVIN = regexp.MustCompile(`^[A-HJ-NPR-Z0-9]{17}$`)
+var carsCommerceTypeFilter = regexp.MustCompile(`^_dFR\[type\]\[[0-9]+\]$`)
 
 type carsCommerceListing struct {
 	VIN     string          `json:"vin"`
@@ -71,44 +74,64 @@ type carsCommerceResponse struct {
 	} `json:"meta"`
 }
 
-// The template supplies the page's default type. Never silently ignore a URL
+// The template supplies the page's default types. Never silently ignore a URL
 // refinement: doing so could import a different inventory than the user chose.
-func carsCommerceSort(sourceURL string, site config.SiteConfig) (string, error) {
+func carsCommerceQuery(sourceURL string, site config.SiteConfig) (string, []string, error) {
+	configuredTypes := site.CarsCommerce.VehicleTypes
+	if len(configuredTypes) == 0 && site.CarsCommerce.VehicleType != "" {
+		configuredTypes = []string{site.CarsCommerce.VehicleType}
+	}
+	if len(configuredTypes) == 0 || slices.Contains(configuredTypes, "") {
+		return "", nil, fmt.Errorf("Cars Commerce vehicle types are required")
+	}
 	u, err := url.Parse(sourceURL)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	base, err := url.Parse(site.BaseURL)
 	if err != nil || !strings.EqualFold(u.Host, base.Host) || strings.TrimSuffix(u.Path, "/") != strings.TrimSuffix(base.Path, "/") {
-		return "", fmt.Errorf("Cars Commerce template does not match source host/path")
+		return "", nil, fmt.Errorf("Cars Commerce template does not match source host/path")
 	}
 	query, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	sortField := "low_price"
-	for key, values := range query {
+	requestedTypes := []string{}
+	keys := make([]string, 0, len(query))
+	for key := range query {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		values := query[key]
 		if strings.HasPrefix(key, "utm_") || key == "gclid" || key == "fbclid" {
 			continue
 		}
 		if len(values) != 1 {
-			return "", fmt.Errorf("unsupported repeated inventory parameter %q", key)
+			return "", nil, fmt.Errorf("unsupported repeated inventory parameter %q", key)
 		}
-		switch key {
-		case "_dFR[type][0]":
-			if values[0] != site.CarsCommerce.VehicleType {
-				return "", fmt.Errorf("inventory type does not match configured %q page", site.CarsCommerce.VehicleType)
+		switch {
+		case carsCommerceTypeFilter.MatchString(key):
+			if !slices.Contains(configuredTypes, values[0]) {
+				return "", nil, fmt.Errorf("inventory type does not match configured %q page", configuredTypes)
 			}
-		case "idx":
+			if !slices.Contains(requestedTypes, values[0]) {
+				requestedTypes = append(requestedTypes, values[0])
+			}
+		case key == "idx":
 			if values[0] != "year_high_to_low" {
-				return "", fmt.Errorf("unsupported inventory sort %q", values[0])
+				return "", nil, fmt.Errorf("unsupported inventory sort %q", values[0])
 			}
 			sortField = "year"
 		default:
-			return "", fmt.Errorf("unsupported inventory query parameter %q", key)
+			return "", nil, fmt.Errorf("unsupported inventory query parameter %q", key)
 		}
 	}
-	return sortField, nil
+	if len(requestedTypes) == 0 {
+		requestedTypes = configuredTypes
+	}
+	return sortField, requestedTypes, nil
 }
 
 // Keep published zero/blank values; missing or null optional fields stay blank.
@@ -166,10 +189,10 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 		return RunResult{Errors: []model.StructuredError{{Code: "CARS_COMMERCE_FETCH_FAILED", Message: err.Error()}}}
 	}
 	cfg := site.CarsCommerce
-	if cfg.CCID == "" || strings.IndexFunc(cfg.CCID, func(r rune) bool { return r < '0' || r > '9' }) >= 0 || strings.TrimSpace(cfg.SearchKey) == "" || cfg.VehicleType == "" {
-		return fail(fmt.Errorf("Cars Commerce ccid, public search key and vehicle type are required"))
+	if cfg.CCID == "" || strings.IndexFunc(cfg.CCID, func(r rune) bool { return r < '0' || r > '9' }) >= 0 || strings.TrimSpace(cfg.SearchKey) == "" {
+		return fail(fmt.Errorf("Cars Commerce ccid and public search key are required"))
 	}
-	sortField, err := carsCommerceSort(sourceURL, site)
+	sortField, vehicleTypes, err := carsCommerceQuery(sourceURL, site)
 	if err != nil {
 		return fail(err)
 	}
@@ -191,7 +214,7 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 			"page": page, "perPage": 100,
 			"sort": []map[string]string{{"field": sortField, "order": order}},
 			"filters": map[string]interface{}{"status": []string{"publish", "modified", "pend-sale"}},
-			"facetFilters": map[string][]string{"type_slug": {cfg.VehicleType}},
+			"facetFilters": map[string][]string{"type_slug": vehicleTypes},
 			"requestedFields": []string{"vin", "stock", "type", "year", "make", "model", "trim", "mileage", "vdp_url", "pricing", "styles", "mechanical", "body_details", "passenger_capacity", "media", "extra_fields"},
 		})
 		if err != nil {
@@ -234,8 +257,8 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 			return fail(fmt.Errorf("incomplete or changing Cars Commerce inventory on page %d", page))
 		}
 		for _, row := range result.Data.Listings {
-			if row.Type != cfg.VehicleType {
-				return fail(fmt.Errorf("Cars Commerce returned a vehicle outside the %q filter", cfg.VehicleType))
+			if !slices.Contains(vehicleTypes, row.Type) {
+				return fail(fmt.Errorf("Cars Commerce returned a vehicle outside the %q filter", vehicleTypes))
 			}
 			item := NormalizeItem(sourceURL, carsCommerceItem(row))
 			vin := strings.ToUpper(strings.TrimSpace(row.VIN))
