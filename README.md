@@ -178,6 +178,15 @@ curl -X POST http://localhost:8080/v1/scrape/discover-flow \
 Discovered configs are cached in-process memory (not written to YAML); they are lost on restart and re-discovered on the next request.
 
 ## Site Adapters
+Riverton Acura's `/new-vehicles/` template uses its public Cars Commerce API
+instead of browser-rendered cards. The `carsCommerce` configuration supplies
+the dealer CCID, public website search key, and required vehicle type (`New`).
+The adapter preserves that type when the URL omits it, accepts the verified
+`idx=year_high_to_low` sort, and rejects conflicting or unsupported refinements
+rather than importing a broader inventory. It checks every returned type,
+vehicle identity and page count before returning items. Only templates with
+`carsCommerce` configured use this path; other sites retain their existing flow.
+
 Add new YAML under `configs/sites/<dealer>.yaml`:
 - list selectors (`cardSelector`, title/url/price etc.)
 - detail page image selectors

@@ -18,9 +18,17 @@ type SiteConfig struct {
 	DetailPage DetailPageConfig  `yaml:"detailPage" json:"detailPage"`
 	Regex      RegexConfig       `yaml:"regex" json:"regex"`
 	Discovery  DiscoveryMetadata `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+	CarsCommerce *CarsCommerceConfig `yaml:"carsCommerce,omitempty" json:"carsCommerce,omitempty"`
 	// ExtraCookies is runtime-only (not persisted). Used to inject session cookies
 	// like datadome into browser and HTTP fetcher requests.
 	ExtraCookies map[string]string `yaml:"-" json:"-"`
+}
+
+// CarsCommerceConfig opts a verified listing page into its public inventory API.
+type CarsCommerceConfig struct {
+	CCID        string `yaml:"ccid" json:"ccid"`
+	SearchKey   string `yaml:"searchKey" json:"searchKey"`
+	VehicleType string `yaml:"vehicleType" json:"vehicleType"`
 }
 
 type ListPageConfig struct {
@@ -155,7 +163,7 @@ func (l Loader) LoadByPath(path string) (SiteConfig, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return SiteConfig{}, err
 	}
-	if cfg.ListPage.CardSelector == "" {
+	if cfg.ListPage.CardSelector == "" && cfg.CarsCommerce == nil {
 		return SiteConfig{}, fmt.Errorf("invalid site config: missing cardSelector")
 	}
 	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 {

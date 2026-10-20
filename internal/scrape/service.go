@@ -123,6 +123,9 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 
 func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
 	reportProgress(opts, "started", 0)
+	if site.CarsCommerce != nil {
+		return scrapeCarsCommerce(ctx, sourceURL, site, opts)
+	}
 	// Merge default cookies with per-request cookies (per-request takes precedence).
 	cookies := opts.Cookies
 	if s.DefaultCookies != nil && s.DefaultCookies.Len() > 0 {
