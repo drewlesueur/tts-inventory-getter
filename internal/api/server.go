@@ -1263,9 +1263,12 @@ func isFreshScrapeCacheForSite(result model.ScrapeResult, site config.SiteConfig
 	}
 	// A configured stock selector means the dealer publishes a real stock
 	// number. Do not let an older VIN-fallback result mask a repaired template.
-	if strings.TrimSpace(site.DetailPage.StockSelector) == "" && strings.TrimSpace(site.ListPage.StockSelector) == "" {
+	// The Carvin API adapter also requires real stock, even without DOM selectors.
+	carvin := config.IsCarvinATXInventoryURL(site.BaseURL)
+	if strings.TrimSpace(site.DetailPage.StockSelector) == "" && strings.TrimSpace(site.ListPage.StockSelector) == "" && !carvin {
 		return true
 	}
+	seenStocks, seenVINs := map[string]bool{}, map[string]bool{}
 	for _, item := range result.Items {
 		stock := strings.TrimSpace(item.StockID)
 		if stock == "" {
@@ -1274,6 +1277,22 @@ func isFreshScrapeCacheForSite(result model.ScrapeResult, site config.SiteConfig
 		vin := strings.TrimSpace(item.VIN)
 		if stock == "" || (vin != "" && strings.EqualFold(stock, vin)) {
 			return false
+		}
+		if carvin {
+			upperStock, upperVIN := strings.ToUpper(stock), strings.ToUpper(vin)
+			link, err := url.Parse(item.URL)
+			validURL := err == nil && (link.Scheme == "https" || link.Scheme == "http") && link.User == nil && link.Port() == "" && strings.EqualFold(strings.TrimPrefix(link.Hostname(), "www."), "carvinatx.com") && strings.HasPrefix(link.Path, "/vehicle/")
+			validVIN := len(upperVIN) == 17 && strings.ContainsAny(upperVIN, "0123456789") && !strings.ContainsAny(upperVIN, "IOQ") && strings.IndexFunc(upperVIN, func(r rune) bool {
+				return !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+			}) == -1
+			if !validURL || !validVIN || seenStocks[upperStock] || seenVINs[upperVIN] {
+				return false
+			}
+			switch upperStock {
+			case "N/A", "NA", "NONE", "—", "-":
+				return false
+			}
+			seenStocks[upperStock], seenVINs[upperVIN] = true, true
 		}
 	}
 	return true

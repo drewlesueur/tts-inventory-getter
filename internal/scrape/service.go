@@ -123,6 +123,9 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 
 func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
 	reportProgress(opts, "started", 0)
+	if config.IsCarvinATXInventoryURL(sourceURL) {
+		return s.scrapeCarvinATX(ctx, sourceURL, site, opts)
+	}
 	if site.CarsCommerce != nil {
 		return scrapeCarsCommerce(ctx, sourceURL, site, opts)
 	}
