@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,4 +277,14 @@ func decodeCacheFilename(name string) string {
 		}
 	}
 	return name
+}
+
+// IsCarvinATXInventoryURL limits the public API adapter to the dealer's inventory page.
+func IsCarvinATXInventoryURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return (host == "carvinatx.com" || host == "www.carvinatx.com") && strings.TrimRight(u.Path, "/") == "/inventory"
 }
