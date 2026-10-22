@@ -34,6 +34,11 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 	if sourceURL == "" {
 		return config.SiteConfig{}, fmt.Errorf("sourceUrl is required")
 	}
+	// Carvin's listing API and WordPress metadata supply authoritative identities;
+	// DOM discovery picks up trade-in links and misses the stock numbers.
+	if config.IsCarvinATXInventoryURL(sourceURL) {
+		return config.SiteConfig{Name: "carvinatx", BaseURL: sourceURL}, nil
+	}
 	urlKey := cacheKeyForSourceURL(sourceURL)
 	if site, err := r.Loader.LoadByName(urlKey); err == nil {
 		// A persisted site template is user-managed configuration, not transient
