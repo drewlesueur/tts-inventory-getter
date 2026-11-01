@@ -2,6 +2,8 @@ module github.com/drewlesueur/tts-inventory-getter
 
 go 1.26
 
+godebug multipathtcp=0
+
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/chromedp/chromedp v0.15.1

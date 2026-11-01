@@ -71,6 +71,7 @@ func splitAndTrim(raw string) []string {
 }
 
 type Config struct {
+	NHTSADiagnosticsDir        string
 	Port                       string
 	ServiceKey                 string
 	HMACSecret                 string
@@ -120,6 +121,7 @@ func Load() (Config, error) {
 	setDefaults()
 
 	cfg := Config{
+		NHTSADiagnosticsDir:        viper.GetString("NHTSA_DIAGNOSTICS_DIR"),
 		Port:                       viper.GetString("PORT"),
 		ServiceKey:                 viper.GetString("SERVICE_KEY"),
 		HMACSecret:                 viper.GetString("HMAC_SECRET"),
@@ -178,6 +180,7 @@ func (c Config) DefaultRunTimeout() time.Duration {
 
 func setDefaults() {
 	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("NHTSA_DIAGNOSTICS_DIR", "data/nhtsa-diagnostics")
 	viper.SetDefault("REQUEST_BODY_LIMIT_MB", 2)
 	viper.SetDefault("RATE_LIMIT_RPS", 5)
 	viper.SetDefault("RATE_LIMIT_BURST", 10)
