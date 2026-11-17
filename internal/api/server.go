@@ -118,7 +118,7 @@ func (s *Server) handleTapToSignUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	if err := s.invClient.UpsertInventory(ctx, req.AccountID, req.DealershipID, items); err != nil {
+	if err := s.invClient.UpsertInventoryWithActivity(ctx, req.AccountID, req.DealershipID, items, inventoryActivityTrigger(req.ActivityTrigger), ""); err != nil {
 		s.logger.Error("taptosign upsert failed", zap.String("accountId", req.AccountID), zap.String("dealershipId", req.DealershipID), zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, model.ErrorResponse("UPSERT_FAILED", err.Error()))
 		return
@@ -189,18 +189,25 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 			fresh = isFreshScrapeCacheForSite(existing, site, time.Now().UTC())
 		}
 		if fresh {
+            reused := existing
+            reused.ResultID = uuid.NewString(); reused.Status = "cached"
+            reused.StartedAt = time.Now().UTC(); reused.FinishedAt = reused.StartedAt
+            reused.FailureReason = "Reused completed scrape from " + existing.FinishedAt.UTC().Format(time.RFC3339)
+            s.reportScrapeActivity(reused, scrapeActivityTrigger(req.Options))
 			writeJSON(w, http.StatusOK, resultResponse(existing))
 			return
 		}
 	}
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
 		return
 	}
 	if siteErr != nil {
+        s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Site configuration failed: " + siteErr.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+        s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
 		return
 	}
@@ -209,6 +216,9 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 	started := time.Now().UTC()
 	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
+        resultRecord.Status = model.RunStatusFailed
+        resultRecord.FailureReason = "Unable to start scrape: " + err.Error()
+        s.reportScrapeActivity(resultRecord, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
 	}
@@ -246,18 +256,25 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 			fresh = isFreshScrapeCacheForSite(existing, site, time.Now().UTC())
 		}
 		if fresh {
+            reused := existing
+            reused.ResultID = uuid.NewString(); reused.Status = "cached"
+            reused.StartedAt = time.Now().UTC(); reused.FinishedAt = reused.StartedAt
+            reused.FailureReason = "Reused completed scrape from " + existing.FinishedAt.UTC().Format(time.RFC3339)
+            s.reportScrapeActivity(reused, scrapeActivityTrigger(req.Options))
 			writeJSON(w, http.StatusOK, resultResponse(existing))
 			return
 		}
 	}
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey) {
+	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
 		return
 	}
 	if siteErr != nil {
+        s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Site configuration failed: " + siteErr.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+        s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
 		return
 	}
@@ -266,6 +283,9 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 	started := time.Now().UTC()
 	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
+        resultRecord.Status = model.RunStatusFailed
+        resultRecord.FailureReason = "Unable to start scrape: " + err.Error()
+        s.reportScrapeActivity(resultRecord, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return
 	}
@@ -593,16 +613,20 @@ func (s *Server) isCacheOnly(rawURL string) bool {
 // inventory cache as /v1/scrape/run. Static cache-only and dynamically flagged
 // protected domains never fall through to a live server scrape, even when the
 // cached inventory is older than 24 hours; the local-sync worker refreshes it.
-func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request, dealershipID, sourceURL, cacheKey string) bool {
+func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request, dealershipID, sourceURL, cacheKey string, triggers ...string) bool {
+    trigger := "manual"
+    if len(triggers) > 0 { trigger = triggers[0] }
 	if !s.shouldServeFromCache(r.Context(), sourceURL) {
 		return false
 	}
 	cached, err := s.cachedInventoryFor(r.Context(), sourceURL)
 	if errors.Is(err, store.ErrNotFound) {
+        s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Cache-only source has no cached inventory"}, trigger)
 		writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is local-sync only but no synced inventory exists yet"))
 		return true
 	}
 	if err != nil {
+        s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to read cached inventory"}, trigger)
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
 		return true
 	}
@@ -610,14 +634,21 @@ func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request
 	// release the key from whatever stale row still holds it — otherwise the
 	// upsert (which conflict-resolves on result_id) trips the unique constraint.
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+        s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare cached result: " + err.Error()}, trigger)
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
 		return true
 	}
 	result := resultFromCache(uuid.NewString(), dealershipID, sourceURL, cacheKey, cached)
 	if err := s.store.UpsertResult(r.Context(), result); err != nil {
+        result.Status = model.RunStatusFailed
+        result.FailureReason = "Unable to save cached result: " + err.Error()
+        s.reportScrapeActivity(result, trigger)
 		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
 		return true
 	}
+    cachedEvent := result
+    cachedEvent.Status = "cached"; cachedEvent.FailureReason = "Used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339)
+    s.reportScrapeActivity(cachedEvent, trigger)
 	writeJSON(w, http.StatusOK, resultResponse(result))
 	return true
 }
@@ -719,12 +750,16 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+    runActivity := model.ScrapeResult{DealershipID: req.DealershipID, SourceURL: req.URL, Status: model.RunStatusFailed, StartedAt: time.Now().UTC(), FailureReason: "Scrape did not complete"}
+    defer func() { if req.DealershipID != "" { s.reportScrapeActivity(runActivity, scrapeActivityTrigger(req.Options)) } }()
+
 	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
 	// bot-protected on this host) are served from the synced cache.
 	forceLive := req.Options != nil && req.Options.ForceLive != nil && *req.Options.ForceLive
 	if !forceLive && s.shouldServeFromCache(r.Context(), req.URL) {
 		cached, err := s.cachedInventoryFor(r.Context(), req.URL)
 		if err == nil {
+            runActivity.Status = "cached"; runActivity.SuccessItems = len(cached.Items); runActivity.FailureReason = "Used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
 				"url":       req.URL,
@@ -771,6 +806,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	}
 	site, err := s.resolveSiteConfig(r.Context(), onceReq)
 	if err != nil {
+        runActivity.FailureReason = "Site configuration failed: " + err.Error()
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
 		return
 	}
@@ -789,6 +825,10 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := s.scraper.ScrapeOnceWithOptions(ctx, req.URL, site, scrapeOpts)
+    runActivity.SuccessItems = model.ScrapedInventoryCount(result.Items)
+    runActivity.Status = model.RunStatusSuccess; runActivity.FailureReason = ""
+    if len(result.Items) == 0 { runActivity.Status = model.RunStatusFailed; runActivity.FailureReason = "No inventory items returned" } else if len(result.Errors) > 0 { runActivity.Status = model.RunStatusPartial }
+    if len(result.Errors) > 0 { runActivity.FailureReason = result.Errors[0].Message }
 
 	// Hybrid mode: a failed live scrape never returns empty when a synced cache
 	// exists. Bot-blocked failures additionally flag the URL for cache-first.
@@ -797,6 +837,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 			s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
 		}
 		if cached, cerr := s.cachedInventoryFor(r.Context(), req.URL); cerr == nil {
+            runActivity.Status = "cached"; runActivity.SuccessItems = model.ScrapedInventoryCount(cached.Items); runActivity.FailureReason = "Live scrape failed; used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339) + ": " + runActivity.FailureReason
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
 				"url":       req.URL,
@@ -859,6 +900,11 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		backoffBase = 2
 	}
 	var finalRecord model.ScrapeResult
+    defer func() {
+        if finalRecord.ResultID != "" {
+            s.reportScrapeActivity(finalRecord, scrapeActivityTrigger(opts))
+        }
+    }()
 	var finalDur float64
 	runStarted := time.Now().UTC()
 	progressMu := sync.Mutex{}

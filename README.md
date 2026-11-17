@@ -231,3 +231,25 @@ Optional flags:
 docker compose up --build
 ```
 # tts-inventory-getter
+
+
+## Dealership outcome history (DevTracker #12824)
+
+Scrape and inventory-import outcomes are reported separately to the configured
+TapToSign API at `POST /api/inventory/activity`, using the existing service key.
+Deploy the TapToSign receiver before deploying this service change. The receiver
+keeps the latest 50 events per dealership and exposes them in Inventory Status.
+No migration or rewrite of existing scrape results or cached inventory is needed.
+
+Reports identify scheduled, manual, signup or other service activity and include
+the source, times, vehicle count and error summary. Cached results are labelled
+as cached; an empty cache is a failure. An unreadable import acknowledgement or
+network failure is unconfirmed, since the write may already have completed.
+New import metadata shares an event ID with TapToSign's own saved outcome, so
+its confirmed result can replace an earlier unconfirmed report without duplicates.
+Older TapToSign versions ignore these extra request fields.
+
+Reporting is bounded to three seconds and fails open: a failed history request
+is logged without failing a successful scrape or import. There is no durable
+retry queue for reports when TapToSign is unavailable. Historical results are
+not backfilled into the new history.
