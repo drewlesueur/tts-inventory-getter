@@ -46,7 +46,7 @@ func probeImageSize(ctx context.Context, client *http.Client, url string) (int, 
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", imageProbeBytes-1))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ImageSizeProbe/1.0)")
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return 0, 0, err
 	}

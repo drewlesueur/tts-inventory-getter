@@ -181,6 +181,18 @@ curl -X POST http://localhost:8080/v1/scrape/discover-flow \
 Discovered configs are cached in-process memory (not written to YAML); they are lost on restart and re-discovered on the next request.
 
 ## Site Adapters
+Riverton Acura's `/new-vehicles/` and `/used-vehicles/` templates use its public Cars Commerce API
+instead of browser-rendered cards. The `carsCommerce` configuration supplies
+the dealer CCID, public website search key, and the page's vehicle types. The New
+template uses `vehicleType: New`; the Used template uses `vehicleTypes` to include
+both `Used` and `Certified Used`, matching the website's pre-owned page.
+The adapter preserves those defaults when the URL omits refinements, allows
+explicit type refinements to narrow that page's inventory, accepts the verified
+`idx=year_high_to_low` sort, and rejects conflicting or unsupported refinements
+rather than importing a broader inventory. It checks every returned type,
+vehicle identity and page count before returning items. Only templates with
+`carsCommerce` configured use this path; other sites retain their existing flow.
+
 Add new YAML under `configs/sites/<dealer>.yaml`:
 - list selectors (`cardSelector`, title/url/price etc.)
 - detail page image selectors
@@ -222,3 +234,25 @@ Optional flags:
 docker compose up --build
 ```
 # tts-inventory-getter
+
+
+## Dealership outcome history (DevTracker #12824)
+
+Scrape and inventory-import outcomes are reported separately to the configured
+TapToSign API at `POST /api/inventory/activity`, using the existing service key.
+Deploy the TapToSign receiver before deploying this service change. The receiver
+keeps the latest 50 events per dealership and exposes them in Inventory Status.
+No migration or rewrite of existing scrape results or cached inventory is needed.
+
+Reports identify scheduled, manual, signup or other service activity and include
+the source, times, vehicle count and error summary. Cached results are labelled
+as cached; an empty cache is a failure. An unreadable import acknowledgement or
+network failure is unconfirmed, since the write may already have completed.
+New import metadata shares an event ID with TapToSign's own saved outcome, so
+its confirmed result can replace an earlier unconfirmed report without duplicates.
+Older TapToSign versions ignore these extra request fields.
+
+Reporting is bounded to three seconds and fails open: a failed history request
+is logged without failing a successful scrape or import. There is no durable
+retry queue for reports when TapToSign is unavailable. Historical results are
+not backfilled into the new history.

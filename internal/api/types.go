@@ -14,6 +14,7 @@ type ScrapeOnceRequest struct {
 }
 
 type ScrapeOptions struct {
+    ActivityTrigger string `json:"activityTrigger,omitempty"`
 	RunTimeoutSec      int    `json:"runTimeoutSec,omitempty"`
 	UseBrowser         *bool  `json:"useBrowser,omitempty"`
 	UseCodexDiscovery  *bool  `json:"useCodexDiscovery,omitempty"`
@@ -36,6 +37,7 @@ type DiscoverFlowRequest struct {
 }
 
 type TapToSignUpsertRequest struct {
+    ActivityTrigger string `json:"activityTrigger,omitempty"`
 	AccountID    string                `json:"accountId"`
 	DealershipID string                `json:"dealershipId"`
 	Items        []model.InventoryItem `json:"items"`

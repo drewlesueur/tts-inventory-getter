@@ -18,6 +18,32 @@ import sys
 import json
 import asyncio
 
+def diagnostic(method, source_url, status=0, final_url="", html="", message=""):
+    try:
+        # This is diagnostic output only; never include cookies or response bodies.
+        import hashlib
+        from urllib.parse import urlsplit, urlunsplit
+        def safe_url(value):
+            try:
+                u = urlsplit(value)
+                host = u.hostname or ""
+                if u.port:
+                    host += ":" + str(u.port)
+                return urlunsplit((u.scheme, host, u.path, "", ""))
+            except Exception:
+                return "[invalid URL]"
+        markers = ("sorry, you have been blocked", "cf-chl-", "captcha-delivery.com", "access denied", "verify you are human")
+        lower = html[:262144].lower()
+        event = {"stage": "http_response" if status else "fetch_observation", "method": method,
+                 "url": safe_url(source_url), "finalUrl": safe_url(final_url), "httpStatus": status,
+                 "bytes": len(html.encode("utf-8")), "blockMarker": next((m for m in markers if m in lower), ""),
+                 "bodySha256": hashlib.sha256(html.encode("utf-8")).hexdigest() if html else "",
+                 "message": message}
+        print("SCRAPE_DIAGNOSTIC " + json.dumps(event), file=sys.stderr)
+    except Exception:
+        pass  # Observation failures must not change the fetch result.
+
+
 
 def emit(obj):
     print(json.dumps(obj))
@@ -89,6 +115,7 @@ def curl_fetch_one(url, cookie=""):
         if cookie:
             headers["Cookie"] = f"datadome={cookie}"
         r = s.get(url, headers=headers, timeout=30)
+        diagnostic("curl_cffi_details", url, r.status_code, str(r.url), r.text)
         if r.status_code < 400 and not is_blocked(r.text):
             return url, r.text
     except Exception as e:
@@ -114,7 +141,7 @@ async def camoufox_fetch(urls):
 
         for i, url in enumerate(urls):
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 html = ""
                 for _ in range(6):
                     await asyncio.sleep(2)
@@ -130,6 +157,7 @@ async def camoufox_fetch(urls):
                 except Exception:
                     pass
                 results[url] = await page.content()
+                diagnostic("camoufox_details", url, response.status if response else 0, page.url, results[url])
                 emit({"url": url, "html": results[url]})
                 print(f"[details] camoufox {i+1}/{len(urls)} ok {url}", file=sys.stderr)
             except Exception as e:
@@ -177,6 +205,7 @@ async def brave_cdp_fetch(urls):
                         await page.wait_for_timeout(2500)
                         html = await page.content()
                         status = resp.status if resp else 0
+                        diagnostic("brave_cdp_details", url, status, page.url, html)
                         if status < 400 and not is_blocked(html):
                             results[url] = html
                             print(f"[details] brave {i+1}/{len(urls)} ok {url}", file=sys.stderr)

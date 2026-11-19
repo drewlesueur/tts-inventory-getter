@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,9 +19,18 @@ type SiteConfig struct {
 	DetailPage DetailPageConfig  `yaml:"detailPage" json:"detailPage"`
 	Regex      RegexConfig       `yaml:"regex" json:"regex"`
 	Discovery  DiscoveryMetadata `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+	CarsCommerce *CarsCommerceConfig `yaml:"carsCommerce,omitempty" json:"carsCommerce,omitempty"`
 	// ExtraCookies is runtime-only (not persisted). Used to inject session cookies
 	// like datadome into browser and HTTP fetcher requests.
 	ExtraCookies map[string]string `yaml:"-" json:"-"`
+}
+
+// CarsCommerceConfig opts a verified listing page into its public inventory API.
+type CarsCommerceConfig struct {
+	CCID        string `yaml:"ccid" json:"ccid"`
+	SearchKey   string `yaml:"searchKey" json:"searchKey"`
+	VehicleType string `yaml:"vehicleType" json:"vehicleType"`
+	VehicleTypes []string `yaml:"vehicleTypes,omitempty" json:"vehicleTypes,omitempty"`
 }
 
 type ListPageConfig struct {
@@ -155,7 +165,7 @@ func (l Loader) LoadByPath(path string) (SiteConfig, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return SiteConfig{}, err
 	}
-	if cfg.ListPage.CardSelector == "" {
+	if cfg.ListPage.CardSelector == "" && cfg.CarsCommerce == nil {
 		return SiteConfig{}, fmt.Errorf("invalid site config: missing cardSelector")
 	}
 	if cfg.ListPage.Pagination.ScrollMaxAttempts == 0 {
@@ -267,4 +277,14 @@ func decodeCacheFilename(name string) string {
 		}
 	}
 	return name
+}
+
+// IsCarvinATXInventoryURL limits the public API adapter to the dealer's inventory page.
+func IsCarvinATXInventoryURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return (host == "carvinatx.com" || host == "www.carvinatx.com") && strings.TrimRight(u.Path, "/") == "/inventory"
 }

@@ -96,7 +96,7 @@ func (a *AIEnricher) Enrich(ctx context.Context, item model.InventoryItem, websi
 	req.Header.Set("Authorization", "Bearer "+a.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return item, err
 	}

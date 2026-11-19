@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+    "time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
@@ -17,7 +18,9 @@ type HTMLDetailFetcher struct {
 	ImageSizes *ImageSizeCache
 }
 
-func (d HTMLDetailFetcher) FetchDetails(ctx context.Context, item model.InventoryItem, site config.SiteConfig) (model.InventoryItem, error) {
+func (d HTMLDetailFetcher) FetchDetails(ctx context.Context, item model.InventoryItem, site config.SiteConfig) (result model.InventoryItem, resultErr error) {
+    started:=time.Now()
+    defer func(){recordErrorDiagnostic(ctx,"detail","inline",item.URL,started,resultErr)}()
 	if item.URL == "" {
 		return item, nil
 	}

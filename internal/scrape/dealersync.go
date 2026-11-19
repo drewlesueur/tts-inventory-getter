@@ -172,7 +172,7 @@ func fetchDealerSyncJSON(ctx context.Context, rawURL string) (string, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return "", err
 	}

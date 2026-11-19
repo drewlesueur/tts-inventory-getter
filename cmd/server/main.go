@@ -187,6 +187,8 @@ func main() {
 type scrapedPage struct {
 	page  inventoryapi.PageEntry
 	items []model.InventoryItem
+    resultID string
+    diagnostics *scrape.Diagnostics
 }
 
 func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Service, siteLoader config.Loader, discoverClient *discovery.Client, resultStore store.ResultStore, invClient *inventoryapi.Client, jobName, scheduleType string, pages []inventoryapi.PageEntry) []scrapedPage {
@@ -231,8 +233,25 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			continue
 		}
 
+        func() {
+        event := inventoryapi.Activity{ID: uuid.NewString(), Phase: "scrape", Trigger: "scheduled", Status: "failed", SourceURL: p.URL, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Message: "Scrape did not complete"}
+        diagnosticContext, diagnostics := scrape.WithDiagnostics(context.Background())
+        diagnostics.SetAttempt(1)
+        diagnostics.Add(model.DiagnosticEvent{Stage:"scheduled",URL:p.URL,Message:"job="+jobName+"; schedule="+scheduleType})
+        started := time.Now().UTC()
+        recorded:=false
+        defer func(){
+            if recorded {return}
+            diagnostics.Add(model.DiagnosticEvent{Stage:"not_imported",URL:p.URL,Message:event.Message})
+            record:=model.ScrapeResult{ResultID:event.ID,DealershipID:p.DealershipID,SourceURL:p.URL,Status:model.RunStatusFailed,StartedAt:started,FinishedAt:time.Now().UTC(),FailureReason:scrape.DiagnosticText(event.Message),Diagnostics:diagnostics.Snapshot()}
+            storeCtx,storeCancel:=context.WithTimeout(context.Background(),3*time.Second)
+            defer storeCancel()
+            if err:=resultStore.UpsertResult(storeCtx,record);err!=nil {logger.Warn("diagnostic result save failed",zap.String("resultId",event.ID),zap.Error(err))}
+        }()
+        defer func() {
+            if err := invClient.ReportActivity(p.DealershipID, p.AccountID, event); err != nil { logger.Warn("scheduled scrape activity report failed", zap.Error(err)) }
+        }()
 		var res scrape.RunResult
-		started := time.Now().UTC()
 
 		// Hybrid mode: statically cache-only URLs and URLs auto-flagged as
 		// bot-protected on this host are served from the synced cache.
@@ -247,22 +266,26 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			if cerr != nil {
 				logger.Warn("cache-first url has no cached inventory, skipping",
 					zap.String("job", jobName), zap.String("url", p.URL), zap.Error(cerr))
-				continue
+                event.Message = "Cache-only source has no cached inventory"
+				return
 			}
 			res = scrape.RunResult{Items: cached.Items}
+            diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:p.URL,Count:len(cached.Items),Message:"Cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
+            event.Status = "cached"; event.Message = "Used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339)
 			logger.Info("served from cache",
 				zap.String("job", jobName), zap.String("url", p.URL),
 				zap.Int("items", len(cached.Items)), zap.Time("cachedAt", cached.UpdatedAt))
 		} else {
-			resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			resolveCtx, resolveCancel := context.WithTimeout(diagnosticContext, 60*time.Second)
 			site, err := resolveSite(resolveCtx, logger, siteLoader, discoverClient, scraper, p.DealershipID, p.URL)
 			resolveCancel()
 			if err != nil {
 				logger.Warn("site config resolve failed, skipping", zap.String("job", jobName), zap.String("dealershipId", p.DealershipID), zap.Error(err))
-				continue
+                event.Message = "Site configuration failed: " + err.Error()
+				return
 			}
 
-			runCtx, runCancel := context.WithTimeout(context.Background(), cfg.DefaultRunTimeout())
+			runCtx, runCancel := context.WithTimeout(diagnosticContext, cfg.DefaultRunTimeout())
 			res = scraper.ScrapeOnceWithOptions(runCtx, p.URL, site, scrape.Options{
 				DealershipID:       p.DealershipID,
 				SourceURL:          p.URL,
@@ -271,7 +294,11 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			})
 			runCancel()
 
-			// Hybrid mode: bot-blocked -> flag for cache-first and fall back to
+			event.Status = "success"; event.Message = ""
+            if len(res.Items) == 0 { event.Status = "failed"; event.Message = "No inventory items returned" } else if len(res.Errors) > 0 { event.Status = "partial_success" }
+            if len(res.Errors) > 0 { event.Message = res.Errors[0].Message }
+
+            // Hybrid mode: bot-blocked -> flag for cache-first and fall back to
 			// any synced cache instead of upserting an empty result.
 			if len(res.Items) == 0 && scrape.IsBotProtectionFailure(res.Errors) {
 				if ferr := resultStore.FlagProtectedURL(context.Background(), store.ProtectedURL{SourceURL: p.URL, Reason: "bot-blocked in scheduled job"}); ferr == nil {
@@ -279,18 +306,23 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 				}
 				if cached, cerr := resultStore.GetCachedInventory(context.Background(), p.URL); cerr == nil {
 					res = scrape.RunResult{Items: cached.Items}
+            diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:p.URL,Count:len(cached.Items),Message:"Cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
+                    event.Status = "cached"; event.Message = "Live scrape failed; used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339) + ": " + event.Message
 					logger.Info("served from cache after bot-protection failure",
 						zap.String("job", jobName), zap.String("url", p.URL), zap.Int("items", len(cached.Items)))
 				} else {
 					logger.Warn("bot-blocked with no cache; skipping upsert of empty result",
 						zap.String("job", jobName), zap.String("url", p.URL))
-					continue
+					return
 				}
 			}
 		}
 
+        event.ItemCount = model.ScrapedInventoryCount(res.Items)
+        if event.ItemCount == 0 && event.Status == "cached" { event.Status = "failed"; event.Message = "Cached inventory is empty" }
 		record := model.ScrapeResult{
-			ResultID:     uuid.NewString(),
+			ResultID:     event.ID,
+            Diagnostics: diagnostics.Snapshot(),
 			DealershipID: p.DealershipID,
 			SourceURL:    p.URL,
 			Status:       model.RunStatusSuccess,
@@ -309,7 +341,9 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			logger.Error("result store upsert failed", zap.String("resultId", record.ResultID), zap.Error(err))
 		}
 
-		out = append(out, scrapedPage{page: p, items: res.Items})
+		recorded=true
+        out = append(out, scrapedPage{page: p, items: res.Items,resultID:record.ResultID,diagnostics:diagnostics})
+        }()
 	}
 	return out
 }
@@ -383,17 +417,35 @@ func runScheduledUpsertWithPages(logger *zap.Logger, cfg config.Config, scraper 
 			items = append(items, it)
 		}
 		if len(items) == 0 {
+            sp.diagnostics.Add(model.DiagnosticEvent{Stage:"import_skipped",URL:sp.page.URL,Message:"No rows with stock IDs to import"})
+            saveImportDiagnostics(logger,resultStore,sp)
 			logger.Info("no inventory to upsert", zap.String("dealershipId", sp.page.DealershipID), zap.String("accountID", sp.page.AccountID))
+            if err := invClient.ReportActivity(sp.page.DealershipID, sp.page.AccountID, inventoryapi.Activity{ID: uuid.NewString(), Phase: "import", Trigger: "scheduled", Status: "skipped", SourceURL: sp.page.URL, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Message: "No rows with stock IDs to import"}); err != nil { logger.Warn("skipped import activity report failed", zap.Error(err)) }
 			continue
 		}
 		postCtx, postCancel := context.WithTimeout(context.Background(), 60*time.Second)
-		if err := invClient.UpsertInventory(postCtx, sp.page.AccountID, sp.page.DealershipID, items); err != nil {
+        importStarted:=time.Now()
+        importErr := invClient.UpsertInventoryWithActivity(postCtx, sp.page.AccountID, sp.page.DealershipID, items, "scheduled", sp.page.URL)
+        postCancel()
+        message:="Import acknowledged"; if importErr!=nil {message=importErr.Error()}
+        sp.diagnostics.Add(model.DiagnosticEvent{Stage:"import",URL:sp.page.URL,Count:len(items),DurationMS:time.Since(importStarted).Milliseconds(),Message:message})
+        saveImportDiagnostics(logger,resultStore,sp)
+
+		if err := importErr; err != nil {
 			logger.Error("inventory api upsert failed", zap.String("accountID", sp.page.AccountID), zap.Error(err))
 		} else {
 			logger.Info("inventory upserted", zap.String("accountID", sp.page.AccountID), zap.Int("count", len(items)))
 		}
-		postCancel()
 	}
+}
+
+func saveImportDiagnostics(logger *zap.Logger, resultStore store.ResultStore, sp scrapedPage) {
+    ctx,cancel:=context.WithTimeout(context.Background(),3*time.Second)
+    defer cancel()
+    record,err:=resultStore.GetResult(ctx,sp.resultID)
+    if err!=nil {logger.Warn("import diagnostics read failed",zap.String("resultId",sp.resultID),zap.Error(err));return}
+    record.Diagnostics=sp.diagnostics.Snapshot()
+    if err:=resultStore.UpsertResult(ctx,record);err!=nil {logger.Warn("import diagnostics save failed",zap.String("resultId",sp.resultID),zap.Error(err))}
 }
 
 func newLogger(errorLogPath string) (*zap.Logger, func(), error) {

@@ -109,7 +109,7 @@ func fetchDrivenMotionInventoryHTML(ctx context.Context, pageURL string) (string
 			return "", err
 		}
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36")
-		resp, err := client.Do(req)
+		resp, err := diagnosticHTTPDo(client,req)
 		if err != nil {
 			return "", err
 		}

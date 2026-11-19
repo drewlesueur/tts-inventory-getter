@@ -72,6 +72,9 @@ func TestUpsertInventorySendsServiceKeyAndDealershipID(t *testing.T) {
 		BaseURL:    "http://inventory.test",
 		ServiceKey: "service-key",
 		HTTPClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+            if r.URL.Path == "/api/inventory/activity" {
+                return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"status":200}`))}, nil
+            }
 			gotHeader = r.Header.Get("X-Service-Key")
 			if r.URL.Path != "/upsertAccountInventory" {
 				t.Errorf("unexpected request path: %s", r.URL.Path)

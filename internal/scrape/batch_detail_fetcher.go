@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+    "time"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
@@ -107,6 +108,7 @@ func (b *BatchDetailFetcher) PrefetchAndPopulate(ctx context.Context, items []mo
 			continue
 		}
 		populated, perr := populateDetailsFromHTML(ctx, b.ImageSizes, items[i], site, html)
+		if perr != nil { RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"detail_extraction",URL:items[i].URL,Message:perr.Error()}) }
 		if perr == nil {
 			items[i] = populated
 		}
@@ -121,7 +123,11 @@ func (b *BatchDetailFetcher) PrefetchAndPopulate(ctx context.Context, items []mo
 // fetchAll runs fetch_details.py and consumes its NDJSON stream. If the process
 // dies (deadline kill, crash), everything streamed so far is returned alongside
 // the error instead of being thrown away.
-func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (map[string]string, error) {
+func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (output map[string]string, resultErr error) {
+    started:=time.Now()
+    defer func(){
+        RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"detail_batch",Method:"python",DurationMS:time.Since(started).Milliseconds(),Count:len(output),Message:fmt.Sprintf("requested=%d; error=%v",len(urls),resultErr)})
+    }()
 	input, _ := json.Marshal(urls)
 	args := []string{b.ScriptPath}
 	if b.CookieStore != nil {
@@ -131,7 +137,7 @@ func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (map[s
 	}
 	cmd := exec.CommandContext(ctx, b.PythonBin, args...)
 	cmd.Stdin = bytes.NewReader(input)
-	var stderr bytes.Buffer
+	var stderr boundedDiagnosticBuffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -153,6 +159,7 @@ func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (map[s
 		}
 		var l batchDetailLine
 		if err := json.Unmarshal(line, &l); err != nil {
+            RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"detail_output_parse",Method:"python",Message:err.Error()})
 			continue
 		}
 		switch {
@@ -176,16 +183,21 @@ func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (map[s
 		}
 	}
 
+    // A scanner limit/read failure stops consumption. Close the pipe and stop
+    // the child before waiting so a writer cannot hang on an undrained pipe.
+    if scanner.Err()!=nil { _=stdout.Close(); _=cmd.Process.Kill() }
 	waitErr := cmd.Wait()
+    recordSubprocessDiagnostics(ctx,"python_details","",stderr.String())
+    for u, html := range results { recordPageDiagnostic(ctx,"detail_page","python_details",u,"",html,0,started,nil) }
+    if scanErr:=scanner.Err(); scanErr!=nil { return results,diagnosticError(fmt.Errorf("batch detail output read failed: %w",scanErr),stderr.String()) }
 	if scriptErr != "" {
-		return results, fmt.Errorf("batch detail: %s", scriptErr)
+		return results, diagnosticError(fmt.Errorf("batch detail: %s", scriptErr),stderr.String())
 	}
 	if waitErr != nil {
-		return results, fmt.Errorf("batch detail fetch failed after %d/%d pages: %w — %s",
-			len(results), len(urls), waitErr, tailString(stderr.String(), 2000))
+		return results, diagnosticError(fmt.Errorf("batch detail fetch failed after %d/%d pages: %w", len(results), len(urls), waitErr), stderr.String())
 	}
 	if !done && len(results) == 0 {
-		return results, fmt.Errorf("batch detail produced no output — %s", tailString(stderr.String(), 2000))
+		return results, diagnosticError(fmt.Errorf("batch detail produced no output"), stderr.String())
 	}
 	return results, nil
 }

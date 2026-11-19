@@ -67,7 +67,7 @@ func fetchIMotorInventoryHTML(ctx context.Context, pageURL string) (string, erro
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +127,7 @@ func getIMotorBytes(ctx context.Context, client *http.Client, rawURL string) ([]
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return nil, err
 	}

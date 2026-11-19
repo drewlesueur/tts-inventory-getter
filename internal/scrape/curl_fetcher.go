@@ -34,6 +34,7 @@ type fetchPageResult struct {
 	Cookie string `json:"cookie"`
 	Status int    `json:"status"`
 	Error  string `json:"error"`
+    FinalURL string `json:"finalUrl"`
 }
 
 func (c *CurlFetcher) Fetch(ctx context.Context, rawURL string) (string, error) {
@@ -77,7 +78,10 @@ func (c *CurlFetcher) fetchWithCookie(ctx context.Context, rawURL, cookie string
 	return c.fetchWithCookieOpts(ctx, rawURL, cookie, false)
 }
 
-func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie string, skipHTTP bool) (string, error) {
+func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie string, skipHTTP bool) (html string, fetchErr error) {
+    started:=time.Now()
+    method:="python_http"; if skipHTTP { method="python_rendered" }
+    defer func(){recordPageDiagnostic(ctx,"fetch",method,rawURL,"",html,0,started,fetchErr)}()
 	args := []string{c.ScriptPath, rawURL}
 	if cookie != "" {
 		args = append(args, cookie)
@@ -87,7 +91,8 @@ func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie st
 	if skipHTTP {
 		cmd.Env = append(os.Environ(), "FETCH_SKIP_HTTP=1")
 	}
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+    var stderr boundedDiagnosticBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -102,8 +107,9 @@ func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie st
 	}
 
 	runErr := cmd.Run()
+    recordSubprocessDiagnostics(ctx,method,rawURL,stderr.String())
 	if runErr != nil {
-		return onErr(fmt.Errorf("curl_cffi exec failed: %w — %s", runErr, strings.TrimSpace(stderr.String())))
+		return onErr(diagnosticError(fmt.Errorf("curl_cffi exec failed: %w", runErr),stderr.String()))
 	}
 
 	var result fetchPageResult
@@ -111,9 +117,12 @@ func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie st
 		return onErr(fmt.Errorf("curl_cffi output parse failed: %w", err))
 	}
 	if result.Error != "" {
-		return onErr(fmt.Errorf("curl_cffi: %s", result.Error))
+		return onErr(diagnosticError(fmt.Errorf("curl_cffi: %s", result.Error), stderr.String()))
 	}
-	if result.Status >= 400 {
+	// The Python success envelope historically says 200 even after browser
+    // rendering; it is not necessarily the site's navigation status.
+    recordPageDiagnostic(ctx,"fetcher_result",method,rawURL,result.FinalURL,result.HTML,0,started,nil)
+    if result.Status >= 400 {
 		return onErr(fmt.Errorf("curl_cffi fetch failed status=%d", result.Status))
 	}
 

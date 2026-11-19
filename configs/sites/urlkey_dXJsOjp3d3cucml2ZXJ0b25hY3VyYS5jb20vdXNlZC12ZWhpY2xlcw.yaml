@@ -1,0 +1,14 @@
+# Verified from the Used page's published inventoryLightningSettings.refinements.
+# Its pre-owned inventory includes both Used and Certified Used vehicles.
+name: url::www.rivertonacura.com/used-vehicles
+baseUrl: https://www.rivertonacura.com/used-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "6081820"
+    # Public browser search key, not a scraper-service credential.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleTypes:
+        - Used
+        - Certified Used

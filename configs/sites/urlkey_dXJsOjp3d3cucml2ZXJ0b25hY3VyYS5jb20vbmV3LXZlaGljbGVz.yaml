@@ -1,0 +1,12 @@
+# Riverton's DealerInspire VRP uses the public Cars Commerce search API.
+# Keep the page's New default even when the URL omits _dFR[type][0].
+name: url::www.rivertonacura.com/new-vehicles
+baseUrl: https://www.rivertonacura.com/new-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "6081820"
+    # Public browser search key, not a scraper-service credential.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleType: New

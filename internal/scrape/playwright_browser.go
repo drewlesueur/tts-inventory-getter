@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+    "time"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
@@ -63,7 +64,8 @@ async function exhaustInfiniteScroll(page) {
     }
   });
   const page = await ctx.newPage();
-  await page.goto(process.argv[1], { waitUntil: "networkidle" });
+  const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
+  console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
   await exhaustInfiniteScroll(page);
   process.stdout.write(await page.content());
   await browser.close();
@@ -110,7 +112,8 @@ async function exhaustInfiniteScroll(page) {
   });
   const page = await ctx.newPage();
   await page.addInitScript(() => { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); });
-  await page.goto(process.argv[1], { waitUntil: "networkidle" });
+  const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
+  console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
   await exhaustInfiniteScroll(page);
   process.stdout.write(await page.content());
   await browser.close();
@@ -129,7 +132,9 @@ func NewPlaywrightBrowser(command string) *PlaywrightBrowser {
 	return &PlaywrightBrowser{Command: command}
 }
 
-func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (string, error) {
+func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (resultHTML string, resultErr error) {
+    started:=time.Now()
+    defer func(){recordPageDiagnostic(ctx,"fetch","playwright",urlStr,"",resultHTML,0,started,resultErr)}()
 	if strings.TrimSpace(p.Command) == "" {
 		return "", fmt.Errorf("playwright command missing")
 	}
@@ -148,7 +153,7 @@ func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, site confi
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("playwright render failed: %w stderr=%s", err, strings.TrimSpace(stderr))
+		return "", diagnosticError(fmt.Errorf("playwright render failed: %w", err),stderr)
 	}
 	if strings.TrimSpace(html) == "" {
 		return "", fmt.Errorf("playwright returned empty html")
@@ -160,10 +165,11 @@ func runPlaywrightCommand(ctx context.Context, command, urlStr string, infiniteS
 	script := command + " " + strconv.Quote(urlStr) + " " + strconv.FormatBool(infiniteScroll)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
 	var out bytes.Buffer
-	var errOut bytes.Buffer
+	var errOut boundedDiagnosticBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	err := cmd.Run()
+    recordSubprocessDiagnostics(ctx, "playwright", urlStr, errOut.String())
 	return out.String(), errOut.String(), err
 }
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+    "github.com/drewlesueur/tts-inventory-getter/internal/model"
+
 	fhttp "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
@@ -64,7 +66,9 @@ func (f *HTTPFetcher) FetchUnsafe(ctx context.Context, url string) (string, erro
 
 // FetchWithCookie uses a Chrome-impersonating TLS client so that DataDome
 // validates the cookie against a matching TLS fingerprint.
-func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string) (string, error) {
+func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string) (html string, fetchErr error) {
+    started:=time.Now()
+    defer func(){recordPageDiagnostic(ctx,"fetch","go_tls_http",rawURL,"",html,0,started,fetchErr)}()
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "", err
@@ -113,6 +117,7 @@ func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string
 			return
 		}
 		defer resp.Body.Close()
+        RecordDiagnostic(ctx, model.DiagnosticEvent{Stage:"http_response",Method:"go_tls_http",URL:rawURL,HTTPStatus:resp.StatusCode})
 		if resp.StatusCode >= 400 {
 			ch <- result{err: fmt.Errorf("fetch failed status=%d", resp.StatusCode)}
 			return
@@ -140,7 +145,10 @@ func (f *HTTPFetcher) FetchWithCookie(ctx context.Context, rawURL, cookie string
 	}
 }
 
-func (f *HTTPFetcher) fetchWithClient(ctx context.Context, rawURL string, client *http.Client, enforceSafe bool) (string, error) {
+func (f *HTTPFetcher) fetchWithClient(ctx context.Context, rawURL string, client *http.Client, enforceSafe bool) (html string, fetchErr error) {
+    started:=time.Now()
+    finalURL:=""; status:=0
+    defer func(){recordPageDiagnostic(ctx,"fetch","go_http",rawURL,finalURL,html,status,started,fetchErr)}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", err
@@ -164,6 +172,8 @@ func (f *HTTPFetcher) fetchWithClient(ctx context.Context, rawURL string, client
 		return "", err
 	}
 	defer resp.Body.Close()
+    status=resp.StatusCode
+    if resp.Request!=nil && resp.Request.URL!=nil { finalURL=resp.Request.URL.String() }
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("fetch failed status=%d", resp.StatusCode)
 	}

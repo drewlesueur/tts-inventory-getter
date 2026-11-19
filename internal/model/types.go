@@ -88,6 +88,7 @@ type RunSummary struct {
 }
 
 type ScrapeResult struct {
+    Diagnostics *Diagnostics `json:"diagnostics,omitempty"`
 	ResultID       string            `json:"resultId"`
 	DealershipID   string            `json:"dealershipId"`
 	SourceURL      string            `json:"sourceUrl"`

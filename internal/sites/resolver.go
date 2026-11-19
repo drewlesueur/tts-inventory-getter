@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
+    "github.com/drewlesueur/tts-inventory-getter/internal/model"
+    "github.com/drewlesueur/tts-inventory-getter/internal/scrape"
 	"github.com/drewlesueur/tts-inventory-getter/internal/discovery"
 )
 
@@ -29,10 +31,20 @@ type Resolver struct {
 	Logger   *zap.Logger
 }
 
-func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (config.SiteConfig, error) {
+func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (siteResult config.SiteConfig, resolveErr error) {
+    defer func(){
+        message:="selected="+siteResult.Name
+        if resolveErr!=nil { message=resolveErr.Error() }
+        scrape.RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"configuration_resolution",URL:sourceURL,Message:message})
+    }()
 	sourceURL = strings.TrimSpace(sourceURL)
 	if sourceURL == "" {
 		return config.SiteConfig{}, fmt.Errorf("sourceUrl is required")
+	}
+	// Carvin's listing API and WordPress metadata supply authoritative identities;
+	// DOM discovery picks up trade-in links and misses the stock numbers.
+	if config.IsCarvinATXInventoryURL(sourceURL) {
+		return config.SiteConfig{Name: "carvinatx", BaseURL: sourceURL}, nil
 	}
 	urlKey := cacheKeyForSourceURL(sourceURL)
 	if site, err := r.Loader.LoadByName(urlKey); err == nil {
@@ -47,7 +59,9 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 	if r.Browser != nil {
 		if h, err := safeRender(ctx, r.Browser, sourceURL); err == nil {
 			html = h
-		}
+		} else {
+            scrape.RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"discovery_render",URL:sourceURL,Message:err.Error()})
+        }
 	}
 	if html == "" {
 		if r.Fetcher == nil {
@@ -67,9 +81,10 @@ func (r Resolver) Resolve(ctx context.Context, dealershipID, sourceURL string) (
 		proposed.Name = urlKey
 	}
 	r.Loader.Cache(urlKey, proposed)
-	if err := r.Loader.SaveByName(urlKey, proposed); err != nil && r.Logger != nil {
-		r.Logger.Warn("failed to persist url-keyed site config", zap.String("urlKey", urlKey), zap.Error(err))
-	}
+	if err := r.Loader.SaveByName(urlKey, proposed); err != nil {
+        scrape.RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"configuration_save",URL:sourceURL,Message:err.Error()})
+        if r.Logger != nil { r.Logger.Warn("failed to persist url-keyed site config", zap.String("urlKey", urlKey), zap.Error(err)) }
+    }
 	if r.Logger != nil {
 		proposedJSON, _ := json.MarshalIndent(proposed, "", "  ")
 		r.Logger.Info("site config discovered and cached",

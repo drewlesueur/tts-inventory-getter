@@ -16,6 +16,32 @@ import sys
 import json
 import asyncio
 
+def diagnostic(method, source_url, status=0, final_url="", html="", message=""):
+    try:
+        # This is diagnostic output only; never include cookies or response bodies.
+        import hashlib
+        from urllib.parse import urlsplit, urlunsplit
+        def safe_url(value):
+            try:
+                u = urlsplit(value)
+                host = u.hostname or ""
+                if u.port:
+                    host += ":" + str(u.port)
+                return urlunsplit((u.scheme, host, u.path, "", ""))
+            except Exception:
+                return "[invalid URL]"
+        markers = ("sorry, you have been blocked", "cf-chl-", "captcha-delivery.com", "access denied", "verify you are human")
+        lower = html[:262144].lower()
+        event = {"stage": "http_response" if status else "fetch_observation", "method": method,
+                 "url": safe_url(source_url), "finalUrl": safe_url(final_url), "httpStatus": status,
+                 "bytes": len(html.encode("utf-8")), "blockMarker": next((m for m in markers if m in lower), ""),
+                 "bodySha256": hashlib.sha256(html.encode("utf-8")).hexdigest() if html else "",
+                 "message": message}
+        print("SCRAPE_DIAGNOSTIC " + json.dumps(event), file=sys.stderr)
+    except Exception:
+        pass  # Observation failures must not change the fetch result.
+
+
 url    = sys.argv[1] if len(sys.argv) > 1 else ""
 cookie = sys.argv[2] if len(sys.argv) > 2 else ""
 
@@ -116,6 +142,7 @@ def try_curl_cffi(url: str, cookie: str):
     try:
         from curl_cffi import requests as cffi
     except ImportError:
+        diagnostic("curl_cffi", url, message="dependency unavailable: curl_cffi")
         return None, None
 
     session = cffi.Session(impersonate="chrome124")
@@ -137,6 +164,7 @@ def try_curl_cffi(url: str, cookie: str):
         print(f"[curl_cffi] error: {e}", file=sys.stderr)
         return None, None
 
+    diagnostic("curl_cffi", url, resp.status_code, str(resp.url), resp.text)
     new_cookie = resp.cookies.get("datadome", "")
 
     if resp.status_code >= 400 or is_blocked(resp.text):
@@ -165,6 +193,7 @@ def try_brave_cdp(url: str):
     try:
         urllib.request.urlopen(f"{cdp}/json/version", timeout=2)
     except Exception:
+        diagnostic("brave_cdp", url, message="debug browser unavailable")
         return None, None  # no debuggable browser running — not an error
 
     try:
@@ -279,6 +308,7 @@ def try_brave_cdp(url: str):
                     html = content()
                 except Exception as exc:
                     print(f"[brave] scroll skipped: {exc}", file=sys.stderr)
+                diagnostic("brave_cdp", url, status, page.url, html)
             finally:
                 page.close()
         if is_blocked(html) or (status >= 400 and status != 403):
@@ -320,7 +350,7 @@ async def try_camoufox(url: str):
                 except Exception as e:
                     print(f"[camoufox] warm-up skipped: {e}", file=sys.stderr)
 
-            await page.goto(url, wait_until="domcontentloaded")
+            response = await page.goto(url, wait_until="domcontentloaded")
 
             # Wait for DataDome to clear (usually instant with Camoufox)
             passed = False
@@ -331,6 +361,7 @@ async def try_camoufox(url: str):
                     print(f"[camoufox] ✓ passed after {(attempt+1)*3}s", file=sys.stderr)
                     passed = True
                     break
+                diagnostic("camoufox", url, response.status if response else 0, page.url, content, "challenge remains")
                 print(f"[camoufox] still blocked at {(attempt+1)*3}s...", file=sys.stderr)
 
             if passed:
@@ -374,6 +405,7 @@ async def try_camoufox(url: str):
                     print(f"[camoufox] scroll error: {e}", file=sys.stderr)
 
                 content = await page.content()
+                diagnostic("camoufox", url, response.status if response else 0, page.url, content)
                 cookies = await page.context.cookies()
                 dd_cookie = next(
                     (c["value"] for c in cookies if c["name"] == "datadome"), ""
