@@ -95,7 +95,7 @@ func (s Service) scrapeCarvinATX(ctx context.Context, sourceURL string, site con
 		if err != nil { return err }
 		req.Header.Set("User-Agent", "Mozilla/5.0")
 		req.Header.Set("Accept", "application/json")
-		resp, err := client.Do(req)
+		resp, err := diagnosticHTTPDo(client,req)
 		if err != nil { return err }
 		defer resp.Body.Close()
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))

@@ -180,9 +180,11 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
 	}
-	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
+    diagnostics.Add(model.DiagnosticEvent{Stage:"request",URL:req.SourceURL,Message:"scrape-once"})
+    cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
 	existing, existingErr := s.store.FindByIdempotency(r.Context(), cacheKey)
-	site, siteErr := s.resolveSiteConfig(r.Context(), req)
+	site, siteErr := s.resolveSiteConfig(diagnosticContext, req)
 	if existingErr == nil {
 		fresh := isFreshScrapeCache(existing, time.Now().UTC())
 		if siteErr == nil {
@@ -194,32 +196,34 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
             reused.StartedAt = time.Now().UTC(); reused.FinishedAt = reused.StartedAt
             reused.FailureReason = "Reused completed scrape from " + existing.FinishedAt.UTC().Format(time.RFC3339)
             s.reportScrapeActivity(reused, scrapeActivityTrigger(req.Options))
-			writeJSON(w, http.StatusOK, resultResponse(existing))
+			diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:req.SourceURL,Message:"Reused completed scrape from "+existing.FinishedAt.UTC().Format(time.RFC3339)})
+            existing.Diagnostics=diagnostics.Snapshot()
+            writeJSON(w, http.StatusOK, resultResponse(existing))
 			return
 		}
 	}
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
+	if s.serveCacheOnlyScrapeOnce(w, r.WithContext(diagnosticContext), req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
 		return
 	}
 	if siteErr != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Site configuration failed: " + siteErr.Error()}, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
+		writeJSON(w, http.StatusBadRequest, s.failedDiagnosticResponse("SITE_CONFIG_NOT_FOUND",siteErr,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, s.failedDiagnosticResponse("CACHE_INVALIDATION_FAILED",err,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
 	site = s.applyCrawlLimits(site, req.Options)
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
+	resultRecord := model.ScrapeResult{Diagnostics:diagnostics.Snapshot(), ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
         resultRecord.Status = model.RunStatusFailed
         resultRecord.FailureReason = "Unable to start scrape: " + err.Error()
         s.reportScrapeActivity(resultRecord, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, diagnosticErrorResponse("STORE_ERROR", err, diagnostics))
 		return
 	}
 
@@ -228,7 +232,7 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options, diagnosticContext)
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "resultId": resultID})
 }
 
@@ -247,9 +251,11 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("INVALID_REQUEST", "dealershipId and valid sourceUrl are required"))
 		return
 	}
-	cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
+	diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
+    diagnostics.Add(model.DiagnosticEvent{Stage:"request",URL:req.SourceURL,Message:"scrape-once"})
+    cacheKey := scrapeOnceCacheKey(req.DealershipID, req.SourceURL)
 	existing, existingErr := s.store.FindByIdempotency(r.Context(), cacheKey)
-	site, siteErr := s.resolveSiteConfig(r.Context(), req)
+	site, siteErr := s.resolveSiteConfig(diagnosticContext, req)
 	if existingErr == nil {
 		fresh := isFreshScrapeCache(existing, time.Now().UTC())
 		if siteErr == nil {
@@ -261,32 +267,34 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
             reused.StartedAt = time.Now().UTC(); reused.FinishedAt = reused.StartedAt
             reused.FailureReason = "Reused completed scrape from " + existing.FinishedAt.UTC().Format(time.RFC3339)
             s.reportScrapeActivity(reused, scrapeActivityTrigger(req.Options))
-			writeJSON(w, http.StatusOK, resultResponse(existing))
+			diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:req.SourceURL,Message:"Reused completed scrape from "+existing.FinishedAt.UTC().Format(time.RFC3339)})
+            existing.Diagnostics=diagnostics.Snapshot()
+            writeJSON(w, http.StatusOK, resultResponse(existing))
 			return
 		}
 	}
-	if s.serveCacheOnlyScrapeOnce(w, r, req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
+	if s.serveCacheOnlyScrapeOnce(w, r.WithContext(diagnosticContext), req.DealershipID, req.SourceURL, cacheKey, scrapeActivityTrigger(req.Options)) {
 		return
 	}
 	if siteErr != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Site configuration failed: " + siteErr.Error()}, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", siteErr.Error()))
+		writeJSON(w, http.StatusBadRequest, s.failedDiagnosticResponse("SITE_CONFIG_NOT_FOUND",siteErr,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, s.failedDiagnosticResponse("CACHE_INVALIDATION_FAILED",err,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
 	site = s.applyCrawlLimits(site, req.Options)
 	resultID := uuid.NewString()
 	started := time.Now().UTC()
-	resultRecord := model.ScrapeResult{ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
+	resultRecord := model.ScrapeResult{Diagnostics:diagnostics.Snapshot(), ResultID: resultID, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusRunning, StartedAt: started, IdempotencyKey: cacheKey, ProgressStage: "accepted"}
 	if err := s.store.UpsertResult(r.Context(), resultRecord); err != nil {
         resultRecord.Status = model.RunStatusFailed
         resultRecord.FailureReason = "Unable to start scrape: " + err.Error()
         s.reportScrapeActivity(resultRecord, scrapeActivityTrigger(req.Options))
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, diagnosticErrorResponse("STORE_ERROR", err, diagnostics))
 		return
 	}
 
@@ -295,7 +303,7 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		timeout = time.Duration(req.Options.RunTimeoutSec) * time.Second
 	}
 
-	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options)
+	go s.runScrapeAsync(resultID, req.DealershipID, req.SourceURL, cacheKey, site, timeout, req.Options, diagnosticContext)
 
 	// Poll until the scrape finishes (or the request context is cancelled).
 	pollCtx, pollCancel := context.WithTimeout(r.Context(), timeout+30*time.Second)
@@ -619,15 +627,17 @@ func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request
 	if !s.shouldServeFromCache(r.Context(), sourceURL) {
 		return false
 	}
-	cached, err := s.cachedInventoryFor(r.Context(), sourceURL)
+	diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
+    cached, err := s.cachedInventoryFor(diagnosticContext, sourceURL)
+    diagnostics.Add(model.DiagnosticEvent{Stage:"cache_lookup",URL:sourceURL,Message:fmt.Sprintf("error=%v",err)})
 	if errors.Is(err, store.ErrNotFound) {
         s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Cache-only source has no cached inventory"}, trigger)
-		writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is local-sync only but no synced inventory exists yet"))
+		writeJSON(w, http.StatusNotFound, s.failedDiagnosticResponse("CACHE_NOT_FOUND", fmt.Errorf("url is local-sync only but no synced inventory exists yet"), diagnostics,dealershipID,sourceURL))
 		return true
 	}
 	if err != nil {
         s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to read cached inventory"}, trigger)
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, s.failedDiagnosticResponse("CACHE_READ_FAILED",err,diagnostics,dealershipID,sourceURL))
 		return true
 	}
 	// The new result reuses cacheKey, and idempotency_key is uniquely indexed, so
@@ -635,15 +645,17 @@ func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request
 	// upsert (which conflict-resolves on result_id) trips the unique constraint.
 	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
         s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare cached result: " + err.Error()}, trigger)
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_INVALIDATION_FAILED", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, diagnosticErrorResponse("CACHE_INVALIDATION_FAILED", err, diagnostics))
 		return true
 	}
 	result := resultFromCache(uuid.NewString(), dealershipID, sourceURL, cacheKey, cached)
+    diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:sourceURL,Count:len(cached.Items),Message:"Cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
+    result.Diagnostics=diagnostics.Snapshot()
 	if err := s.store.UpsertResult(r.Context(), result); err != nil {
         result.Status = model.RunStatusFailed
         result.FailureReason = "Unable to save cached result: " + err.Error()
         s.reportScrapeActivity(result, trigger)
-		writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("STORE_ERROR", err.Error()))
+		writeJSON(w, http.StatusInternalServerError, diagnosticErrorResponse("STORE_ERROR", err, diagnostics))
 		return true
 	}
     cachedEvent := result
@@ -750,18 +762,35 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-    runActivity := model.ScrapeResult{DealershipID: req.DealershipID, SourceURL: req.URL, Status: model.RunStatusFailed, StartedAt: time.Now().UTC(), FailureReason: "Scrape did not complete"}
-    defer func() { if req.DealershipID != "" { s.reportScrapeActivity(runActivity, scrapeActivityTrigger(req.Options)) } }()
+    diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
+    diagnostics.Add(model.DiagnosticEvent{Stage:"request",URL:req.URL,Message:"synchronous scrape"})
+
+    runActivity := model.ScrapeResult{ResultID:uuid.NewString(), DealershipID: req.DealershipID, SourceURL: req.URL, Status: model.RunStatusFailed, StartedAt: time.Now().UTC(), FailureReason: "Scrape did not complete"}
+    defer func() {
+        runActivity.FailureReason=scrape.DiagnosticText(runActivity.FailureReason)
+        runActivity.Diagnostics=diagnostics.Snapshot()
+        runActivity.FinishedAt=time.Now().UTC()
+        runActivity.TotalItems=runActivity.SuccessItems
+        storeCtx,storeCancel:=context.WithTimeout(context.Background(),3*time.Second)
+        defer storeCancel()
+        if err:=s.store.UpsertResult(storeCtx,runActivity);err!=nil {s.logger.Warn("synchronous diagnostics save failed",zap.String("resultId",runActivity.ResultID),zap.Error(err))}
+        if req.DealershipID!="" {s.reportScrapeActivity(runActivity,scrapeActivityTrigger(req.Options))}
+    }()
 
 	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
 	// bot-protected on this host) are served from the synced cache.
 	forceLive := req.Options != nil && req.Options.ForceLive != nil && *req.Options.ForceLive
 	if !forceLive && s.shouldServeFromCache(r.Context(), req.URL) {
 		cached, err := s.cachedInventoryFor(r.Context(), req.URL)
+        diagnostics.Add(model.DiagnosticEvent{Stage:"cache_lookup",URL:req.URL,Message:fmt.Sprintf("cache-only=%t; error=%v",s.isCacheOnly(req.URL),err)})
 		if err == nil {
+            diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:req.URL,Count:len(cached.Items),Message:"Cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
+            runActivity.Items=cached.Items
             runActivity.Status = "cached"; runActivity.SuccessItems = len(cached.Items); runActivity.FailureReason = "Used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
+                "diagnostics": diagnostics.Snapshot(),
+                "resultId": runActivity.ResultID,
 				"url":       req.URL,
 				"source":    "cache",
 				"itemCount": len(cached.Items),
@@ -771,13 +800,15 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !errors.Is(err, store.ErrNotFound) {
-			writeJSON(w, http.StatusInternalServerError, model.ErrorResponse("CACHE_READ_FAILED", err.Error()))
+            runActivity.FailureReason="Unable to read cache: "+err.Error()
+			writeJSON(w, http.StatusInternalServerError, runDiagnosticErrorResponse("CACHE_READ_FAILED", err, diagnostics, runActivity.ResultID))
 			return
 		}
 		// Statically cache-only URLs never live-scrape; auto-flagged URLs fall
 		// through to a live attempt when no cache exists yet (nothing to lose).
 		if s.isCacheOnly(req.URL) {
-			writeJSON(w, http.StatusNotFound, model.ErrorResponse("CACHE_NOT_FOUND", "url is cache-only but no synced inventory exists yet"))
+            runActivity.FailureReason="Cache-only source has no cached inventory"
+			writeJSON(w, http.StatusNotFound, runDiagnosticErrorResponse("CACHE_NOT_FOUND", fmt.Errorf("url is cache-only but no synced inventory exists yet"), diagnostics, runActivity.ResultID))
 			return
 		}
 	}
@@ -804,15 +835,16 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 		SourceURL:    req.URL,
 		Options:      req.Options,
 	}
-	site, err := s.resolveSiteConfig(r.Context(), onceReq)
+	site, err := s.resolveSiteConfig(diagnosticContext, onceReq)
 	if err != nil {
         runActivity.FailureReason = "Site configuration failed: " + err.Error()
-		writeJSON(w, http.StatusBadRequest, model.ErrorResponse("SITE_CONFIG_NOT_FOUND", err.Error()))
+        diagnostics.Add(model.DiagnosticEvent{Stage:"configuration_failed",URL:req.URL,Message:err.Error()})
+		writeJSON(w, http.StatusBadRequest, runDiagnosticErrorResponse("SITE_CONFIG_NOT_FOUND", err, diagnostics, runActivity.ResultID))
 		return
 	}
 	site = s.applyCrawlLimits(site, req.Options)
 
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	ctx, cancel := context.WithTimeout(diagnosticContext, timeout)
 	defer cancel()
 
 	scrapeOpts := scrape.Options{
@@ -825,6 +857,9 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := s.scraper.ScrapeOnceWithOptions(ctx, req.URL, site, scrapeOpts)
+    runActivity.Items=result.Items
+    runActivity.Errors=result.Errors
+    runActivity.ErrorCount=len(result.Errors)
     runActivity.SuccessItems = model.ScrapedInventoryCount(result.Items)
     runActivity.Status = model.RunStatusSuccess; runActivity.FailureReason = ""
     if len(result.Items) == 0 { runActivity.Status = model.RunStatusFailed; runActivity.FailureReason = "No inventory items returned" } else if len(result.Errors) > 0 { runActivity.Status = model.RunStatusPartial }
@@ -837,9 +872,13 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 			s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
 		}
 		if cached, cerr := s.cachedInventoryFor(r.Context(), req.URL); cerr == nil {
+            diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:req.URL,Count:len(cached.Items),Message:"Cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
+            runActivity.Items=cached.Items
             runActivity.Status = "cached"; runActivity.SuccessItems = model.ScrapedInventoryCount(cached.Items); runActivity.FailureReason = "Live scrape failed; used cached inventory from " + cached.UpdatedAt.UTC().Format(time.RFC3339) + ": " + runActivity.FailureReason
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":    "ok",
+                "diagnostics": diagnostics.Snapshot(),
+                "resultId": runActivity.ResultID,
 				"url":       req.URL,
 				"source":    "cache_fallback",
 				"itemCount": len(cached.Items),
@@ -855,6 +894,8 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":    "ok",
+                "diagnostics": diagnostics.Snapshot(),
+                "resultId": runActivity.ResultID,
 		"url":       req.URL,
 		"itemCount": len(result.Items),
 		"items":     result.Items,
@@ -890,7 +931,7 @@ func (s *Server) applyCrawlLimits(site config.SiteConfig, opts *ScrapeOptions) c
 	return site
 }
 
-func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKey string, site config.SiteConfig, timeout time.Duration, opts *ScrapeOptions) {
+func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKey string, site config.SiteConfig, timeout time.Duration, opts *ScrapeOptions, diagnosticContexts ...context.Context) {
 	maxAttempts := s.cfg.ScrapeMaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -907,7 +948,10 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
     }()
 	var finalDur float64
 	runStarted := time.Now().UTC()
-	progressMu := sync.Mutex{}
+	baseContext:=context.Background()
+    if len(diagnosticContexts)>0 { baseContext=context.WithoutCancel(diagnosticContexts[0]) }
+    diagnosticContext, diagnostics := scrape.WithDiagnostics(baseContext)
+    progressMu := sync.Mutex{}
 	writeProgress := func(stage string, count int, attempt int) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
@@ -925,6 +969,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			AttemptCount:   attempt,
 			IdempotencyKey: idempotencyKey,
 			ProgressStage:  stage,
+            Diagnostics: diagnostics.Snapshot(),
 			IsRetrying:     false,
 		}
 		if err := s.store.UpsertResult(context.Background(), record); err != nil {
@@ -933,7 +978,9 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	}
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		start := time.Now().UTC()
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		diagnostics.SetAttempt(attempt)
+        diagnostics.Add(model.DiagnosticEvent{Stage:"attempt_started",URL:sourceURL,Message:fmt.Sprintf("attempt=%d; timeout=%s",attempt,timeout)})
+        ctx, cancel := context.WithTimeout(scrape.WithDiagnosticAttempt(diagnosticContext, attempt), timeout)
 		scrapeOpts := scrape.Options{
 			DealershipID:    dealershipID,
 			SourceURL:       sourceURL,
@@ -965,6 +1012,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		inventoryCount := model.ScrapedInventoryCount(result.Items)
 
 		record := model.ScrapeResult{
+            Diagnostics: result.Diagnostics,
 			ResultID:       resultID,
 			DealershipID:   dealershipID,
 			SourceURL:      sourceURL,
@@ -1003,6 +1051,8 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 		}
 
 		wait := time.Duration(backoffBase*(1<<(attempt-1))) * time.Second
+        diagnostics.Add(model.DiagnosticEvent{Stage:"retry_wait",URL:sourceURL,Message:fmt.Sprintf("wait=%s; reason=%s",wait,record.LastError)})
+        record.Diagnostics=diagnostics.Snapshot()
 		record.IsRetrying = true
 		record.NextRetryAt = time.Now().UTC().Add(wait)
 		record.ProgressStage = "retry_wait"
@@ -1034,7 +1084,10 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 func resultFromCache(resultID, dealershipID, sourceURL, idempotencyKey string, cached store.CachedInventory) model.ScrapeResult {
 	now := time.Now().UTC()
 	count := model.ScrapedInventoryCount(cached.Items)
+    _, diagnostics := scrape.WithDiagnostics(context.Background())
+    diagnostics.Add(model.DiagnosticEvent{Stage:"cache",URL:sourceURL,Count:count,Message:"Reused cache updated at "+cached.UpdatedAt.UTC().Format(time.RFC3339)})
 	return model.ScrapeResult{
+        Diagnostics: diagnostics.Snapshot(),
 		ResultID:       resultID,
 		DealershipID:   dealershipID,
 		SourceURL:      sourceURL,
@@ -1120,6 +1173,7 @@ func resultResponse(result model.ScrapeResult) map[string]any {
 			"resultStatus":          result.Status,
 			"progressStage":         result.ProgressStage,
 			"scrapedInventoryCount": scrapedCount,
+            "diagnostics": result.Diagnostics,
 			"totalItems":            scrapedCount,
 		}
 	}
@@ -1129,6 +1183,7 @@ func resultResponse(result model.ScrapeResult) map[string]any {
 		"resultStatus":          result.Status,
 		"progressStage":         result.ProgressStage,
 		"scrapedInventoryCount": scrapedCount,
+            "diagnostics": result.Diagnostics,
 		"totalItems":            scrapedCount,
 		"successItems":          result.SuccessItems,
 		"failedItems":           result.FailedItems,

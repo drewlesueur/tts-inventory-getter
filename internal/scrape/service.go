@@ -121,7 +121,19 @@ func (s Service) ScrapeOnce(ctx context.Context, sourceURL string, site config.S
 	return s.ScrapeOnceWithOptions(ctx, sourceURL, site, Options{})
 }
 
-func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) RunResult {
+func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, site config.SiteConfig, opts Options) (result RunResult) {
+    ctx, diagnostics := WithDiagnostics(ctx)
+    started := time.Now()
+    diagnostics.Add(model.DiagnosticEvent{Stage:"configuration", Method:opts.BrowserStrategy, URL:sourceURL, Message:fmt.Sprintf("site=%s; cardSelector=%s; maxPages=%d; maxItems=%d; detailsSkipped=%t; batchDetails=%t; inlineDetails=%t; enrichment=%t",site.Name,site.ListPage.CardSelector,site.ListPage.Pagination.MaxPages,site.ListPage.MaxItems,site.DetailPage.Skip,s.BatchDetailFetcher!=nil,s.DetailFetcher!=nil,opts.EnableAIEnrichment)})
+    defer func() {
+        message := fmt.Sprintf("items=%d; errors=%d",len(result.Items),len(result.Errors))
+        if ctx.Err()!=nil { message += "; context="+ctx.Err().Error() }
+        diagnostics.Add(model.DiagnosticEvent{Stage:"completed",URL:sourceURL,Count:len(result.Items),DurationMS:time.Since(started).Milliseconds(),Message:message})
+        for _, failure:=range result.Errors {
+            diagnostics.Add(model.DiagnosticEvent{Stage:"error",Method:failure.Code,URL:failure.ItemURL,Message:failure.Message})
+        }
+        result.Diagnostics = diagnostics.Snapshot()
+    }()
 	reportProgress(opts, "started", 0)
 	if config.IsCarvinATXInventoryURL(sourceURL) {
 		return s.scrapeCarvinATX(ctx, sourceURL, site, opts)
@@ -158,6 +170,7 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	optsWithCookies := opts
 	optsWithCookies.Cookies = cookies
 	pages, pageErrs := s.collectPaginatedHTML(ctx, sourceURL, firstHTML, site, effectiveMaxItems, opts.BrowserStrategy, optsWithCookies)
+    diagnostics.Add(model.DiagnosticEvent{Stage:"pagination",URL:sourceURL,Count:len(pages),Message:fmt.Sprintf("detectedTotal=%d; effectiveMaxItems=%d; paginationErrors=%d",detectedTotal,effectiveMaxItems,len(pageErrs))})
 	reportProgress(opts, "pages_collected", countCollectedCards(pages, site.ListPage.CardSelector))
 
 	allItems := make([]model.InventoryItem, 0)
@@ -170,6 +183,7 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 				continue
 			}
 			items, e := ex.Extract(ctx, page.html, page.url, site)
+            RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"extraction",Method:fmt.Sprintf("%T",ex),URL:page.url,Count:len(items),Message:fmt.Sprintf("items=%d; errors=%d",len(items),len(e))})
 			if len(items) > 0 {
 				if _, isRegex := ex.(RegexExtractor); !isRegex {
 					haveStructuredItems = true
@@ -245,7 +259,8 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	}
 	allItems = Dedupe(allItems)
 	allItems, invalidCount := filterInvalidInventoryItems(allItems)
-	if invalidCount > 0 {
+	RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"validation",URL:sourceURL,Count:len(allItems),Message:fmt.Sprintf("accepted=%d; rejected=%d",len(allItems),invalidCount)})
+    if invalidCount > 0 {
 		errs = append(errs, model.StructuredError{
 			Code:    "INVALID_ITEMS_FILTERED",
 			Message: fmt.Sprintf("discarded %d extracted rows that did not contain credible vehicle data", invalidCount),
@@ -256,6 +271,7 @@ func (s Service) ScrapeOnceWithOptions(ctx context.Context, sourceURL string, si
 	if opts.EnableAIEnrichment && s.AIEnricher != nil {
 		for i := range allItems {
 			enriched, err := s.AIEnricher.Enrich(ctx, allItems[i], sourceURL)
+            if err != nil { RecordDiagnostic(ctx, model.DiagnosticEvent{Stage:"enrichment",URL:allItems[i].URL,Message:err.Error()}) }
 			if err != nil {
 				continue
 			}
@@ -399,7 +415,13 @@ func cookieHeader(cookies map[string]string) string {
 	return strings.Join(parts, "; ")
 }
 
-func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string, cookies map[string]string) (string, error) {
+func (s Service) fetchListHTML(ctx context.Context, pageURL string, site config.SiteConfig, strategy string, cookies map[string]string) (resultHTML string, resultErr error) {
+    started := time.Now()
+    defer func() {
+        recordPageDiagnostic(ctx,"listing",strategy,pageURL,"",resultHTML,0,started,resultErr)
+        cards:=countCards(resultHTML,site.ListPage.CardSelector)
+        RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"listing_cards",URL:pageURL,Count:cards,Message:fmt.Sprintf("cards=%d",cards)})
+    }()
 	// Primary path: the cookie-aware fetcher (CurlFetcher) self-heals — it tries
 	// curl_cffi with the cookie first, then falls back to Camoufox (which bypasses
 	// DataDome without any cookie). Always route through it when available, even
@@ -1450,7 +1472,9 @@ func isTimeoutLikeErr(err error) bool {
 		strings.Contains(s, "eof")
 }
 
-func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site config.SiteConfig) RunResult {
+func (s Service) ScrapeOnceRaw(ctx context.Context, sourceURL string, site config.SiteConfig) (result RunResult) {
+    ctx, diagnostics := WithDiagnostics(ctx)
+    defer func(){result.Diagnostics=diagnostics.Snapshot()}()
 	var html string
 	var fetchErr error
 

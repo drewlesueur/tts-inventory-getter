@@ -227,7 +227,7 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("x-api-key", cfg.SearchKey)
-		resp, err := client.Do(req)
+		resp, err := diagnosticHTTPDo(client,req)
 		if err != nil {
 			return fail(fmt.Errorf("Cars Commerce page %d: %w", page, err))
 		}

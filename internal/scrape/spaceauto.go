@@ -182,7 +182,7 @@ func fetchSpaceAutoVehicles(ctx context.Context, client *http.Client, dealership
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("dealership", dealership)
-		resp, err := client.Do(req)
+		resp, err := diagnosticHTTPDo(client,req)
 		if err != nil {
 			return nil, err
 		}

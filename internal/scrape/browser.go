@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/dom"
+    "github.com/chromedp/cdproto/network"
+    "github.com/drewlesueur/tts-inventory-getter/internal/model"
 	"github.com/chromedp/chromedp"
 	"github.com/drewlesueur/tts-inventory-getter/internal/config"
 )
@@ -75,14 +77,24 @@ func detectChromeExecPath() string {
 	return ""
 }
 
-func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (string, error) {
+func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.SiteConfig) (resultHTML string, resultErr error) {
+    started:=time.Now()
+    var finalURL string
+    defer func(){recordPageDiagnostic(ctx,"fetch","chrome",urlStr,finalURL,resultHTML,0,started,resultErr)}()
 	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx, chromedp.WithErrorf(chromeBrowserErrorf))
 	defer cancelTab()
+    chromedp.ListenTarget(tabCtx,func(event interface{}) {
+        if response,ok:=event.(*network.EventResponseReceived);ok && response.Type==network.ResourceTypeDocument {
+            RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"document_response",Method:"chrome",URL:response.Response.URL,HTTPStatus:int(response.Response.Status),Message:"Browser document response (main frame or subframe)"})
+        }
+        if failure,ok:=event.(*network.EventLoadingFailed);ok && failure.Type==network.ResourceTypeDocument {
+            RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"network_error",Method:"chrome",URL:urlStr,Message:failure.ErrorText})
+        }
+    })
 	timeoutCtx, cancel := context.WithTimeout(tabCtx, 45*time.Second)
 	defer cancel()
 
 	// Phase 1: navigate and read final URL immediately to fail fast on bad redirects.
-	var finalURL string
 	if err := chromedp.Run(timeoutCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			return chromedp.Evaluate(`Object.defineProperty(navigator, 'webdriver', {get: () => undefined})`, nil).Do(ctx)
@@ -106,7 +118,9 @@ func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.S
 		}
 		waitCtx, waitCancel := context.WithTimeout(tabCtx, 4*time.Second)
 		defer waitCancel()
-		_ = chromedp.Run(waitCtx, chromedp.WaitVisible(site.ListPage.WaitSelectors[0], chromedp.ByQuery))
+		if waitErr:=chromedp.Run(waitCtx, chromedp.WaitVisible(site.ListPage.WaitSelectors[0], chromedp.ByQuery));waitErr!=nil {
+            RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"selector_wait",Method:"chrome",URL:urlStr,Message:site.ListPage.WaitSelectors[0]+": "+waitErr.Error()})
+        }
 	}
 	waitForListSelector()
 

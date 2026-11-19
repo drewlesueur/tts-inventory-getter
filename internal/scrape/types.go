@@ -40,6 +40,7 @@ type Extractor interface {
 }
 
 type RunResult struct {
+    Diagnostics *model.Diagnostics
 	Items  []model.InventoryItem
 	Errors []model.StructuredError
 }

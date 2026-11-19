@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS scrape_results (
   progress_stage TEXT,
   idempotency_key TEXT,
   items_json TEXT NOT NULL DEFAULT '[]',
-  errors_json TEXT NOT NULL DEFAULT '[]'
+  errors_json TEXT NOT NULL DEFAULT '[]',
+  diagnostics_json TEXT NOT NULL DEFAULT 'null'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scrape_results_idempotency ON scrape_results(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
 CREATE TABLE IF NOT EXISTS cached_inventory (
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS protected_urls (
 	}
 	// Backward-compatible migrations for existing DBs.
 	migrations := []string{
+        `ALTER TABLE scrape_results ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT 'null'`,
 		`ALTER TABLE scrape_results ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE scrape_results ADD COLUMN last_error TEXT`,
 		`ALTER TABLE scrape_results ADD COLUMN is_retrying INTEGER NOT NULL DEFAULT 0`,
@@ -102,12 +104,14 @@ func (s *SQLiteResultStore) UpsertResult(ctx context.Context, result model.Scrap
 	if err != nil {
 		return err
 	}
-	const q = `
+	diagnostics, err := json.Marshal(result.Diagnostics)
+    if err != nil { return err }
+    const q = `
 INSERT INTO scrape_results (
   result_id, dealership_id, source_url, status, started_at, finished_at,
   total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at,
-  progress_stage, idempotency_key, items_json, errors_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  progress_stage, idempotency_key, items_json, errors_json, diagnostics_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(result_id) DO UPDATE SET
   dealership_id=excluded.dealership_id,
   source_url=excluded.source_url,
@@ -126,7 +130,8 @@ ON CONFLICT(result_id) DO UPDATE SET
   progress_stage=excluded.progress_stage,
   idempotency_key=excluded.idempotency_key,
   items_json=excluded.items_json,
-  errors_json=excluded.errors_json
+  errors_json=excluded.errors_json,
+  diagnostics_json=excluded.diagnostics_json
 `
 	finishedAt := ""
 	if !result.FinishedAt.IsZero() {
@@ -160,12 +165,13 @@ ON CONFLICT(result_id) DO UPDATE SET
 		result.IdempotencyKey,
 		string(items),
 		string(errs),
+        string(diagnostics),
 	)
 	return err
 }
 
 func (s *SQLiteResultStore) GetResult(ctx context.Context, resultID string) (model.ScrapeResult, error) {
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json FROM scrape_results WHERE result_id = ?`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json, diagnostics_json FROM scrape_results WHERE result_id = ?`
 	return s.scanOne(ctx, q, resultID)
 }
 
@@ -323,7 +329,7 @@ func (s *SQLiteResultStore) FindByIdempotency(ctx context.Context, key string) (
 	if key == "" {
 		return model.ScrapeResult{}, ErrNotFound
 	}
-	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
+	const q = `SELECT result_id, dealership_id, source_url, status, started_at, finished_at, total_items, success_items, failed_items, failure_reason, error_count, attempt_count, last_error, is_retrying, next_retry_at, progress_stage, idempotency_key, items_json, errors_json, diagnostics_json FROM scrape_results WHERE idempotency_key = ? ORDER BY started_at DESC LIMIT 1`
 	return s.scanOne(ctx, q, key)
 }
 
@@ -336,7 +342,7 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 	var out model.ScrapeResult
 	var status string
 	var startedAt, finishedAt, nextRetryAt string
-	var itemsJSON, errorsJSON string
+	var itemsJSON, errorsJSON, diagnosticsJSON string
 	var progressStage sql.NullString
 	var isRetrying int
 	err := s.db.QueryRowContext(ctx, query, arg).Scan(
@@ -359,6 +365,7 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 		&out.IdempotencyKey,
 		&itemsJSON,
 		&errorsJSON,
+        &diagnosticsJSON,
 	)
 	if err == sql.ErrNoRows {
 		return model.ScrapeResult{}, ErrNotFound
@@ -390,5 +397,10 @@ func (s *SQLiteResultStore) scanOne(ctx context.Context, query string, arg any) 
 	if err := json.Unmarshal([]byte(errorsJSON), &out.Errors); err != nil {
 		return model.ScrapeResult{}, err
 	}
+    // Diagnostics are optional evidence; a malformed old value must not hide
+    // an otherwise readable inventory result.
+    var diagnostics *model.Diagnostics
+    if err := json.Unmarshal([]byte(diagnosticsJSON), &diagnostics); err == nil { out.Diagnostics = diagnostics }
+
 	return out, nil
 }

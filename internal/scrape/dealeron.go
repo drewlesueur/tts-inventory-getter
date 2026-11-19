@@ -192,7 +192,7 @@ func fetchDealerOnJSON(ctx context.Context, rawURL string) (string, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "application/json")
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := diagnosticHTTPDo(client,req)
 	if err != nil {
 		return "", err
 	}
