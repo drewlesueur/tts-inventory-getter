@@ -3,8 +3,10 @@ package scrape
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -69,6 +71,60 @@ func TestCarsCommerceUnstockedInTransit(t *testing.T) {
 			}
 			if tc.wantItems == 1 && (result.Items[0].StockID != "6N5625" || result.Items[0].Website != result.Items[0].URL || !strings.Contains(result.Errors[0].Message, "1 of 2")) {
 				t.Fatalf("stock number or exclusion count lost: %+v", result)
+			}
+		})
+	}
+}
+
+func TestCarsCommerceVehicleTypeFacet(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		exact        bool
+		vehicleTypes []string
+		wantFacet    string
+		responseType string
+		wantError    bool
+	}{
+		{"legacy new", false, []string{"New"}, "type_slug", "New", false},
+		{"legacy used", false, []string{"Used", "Certified Used"}, "type_slug", "Certified Used", false},
+		{"exact new", true, []string{"New"}, "type", "New", false},
+		{"courtesy row in exact response", true, []string{"New"}, "type", "CTP", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			originalTransport := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = originalTransport })
+			http.DefaultTransport = carsCommerceFixtureTransport(func(req *http.Request) (*http.Response, error) {
+				defer req.Body.Close()
+				var search struct {
+					FacetFilters map[string][]string `json:"facetFilters"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&search); err != nil {
+					t.Fatal(err)
+				}
+				want := map[string][]string{tc.wantFacet: tc.vehicleTypes}
+				if !reflect.DeepEqual(search.FacetFilters, want) {
+					t.Fatalf("facets: got %v, want %v", search.FacetFilters, want)
+				}
+				body := fmt.Sprintf(`{"data":{"listings":[{"type":%q,"vin":"1GKEMPKS3VJ135707","stock":"TEST-STOCK","vdp_url":"https://example.test/inventory/vehicle/"}]},
+					"meta":{"pagination":{"total":1,"count":1,"current_page":1,"total_pages":1}}}`, tc.responseType)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			source := "https://example.test/new-vehicles/"
+			site := config.SiteConfig{
+				BaseURL: source,
+				CarsCommerce: &config.CarsCommerceConfig{
+					CCID: "1", SearchKey: "fixture-key", VehicleTypes: tc.vehicleTypes, ExactVehicleType: tc.exact,
+				},
+			}
+			result := scrapeCarsCommerce(context.Background(), source, site, Options{})
+			if tc.wantError {
+				if len(result.Items) != 0 || len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Message, "outside") {
+					t.Fatalf("out-of-category response yielded %d items and errors %v", len(result.Items), result.Errors)
+				}
+				return
+			}
+			if len(result.Items) != 1 || len(result.Errors) != 0 {
+				t.Fatalf("expected one item with no errors, got %d items and errors %v", len(result.Items), result.Errors)
 			}
 		})
 	}

@@ -31,6 +31,7 @@ type CarsCommerceConfig struct {
 	SearchKey   string `yaml:"searchKey" json:"searchKey"`
 	VehicleType string `yaml:"vehicleType" json:"vehicleType"`
 	VehicleTypes []string `yaml:"vehicleTypes,omitempty" json:"vehicleTypes,omitempty"`
+	ExactVehicleType bool `yaml:"exactVehicleType,omitempty" json:"exactVehicleType,omitempty"`
 	SkipUnstockedInTransit bool `yaml:"skipUnstockedInTransit,omitempty" json:"skipUnstockedInTransit,omitempty"`
 }
 

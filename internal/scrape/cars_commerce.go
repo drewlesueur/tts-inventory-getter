@@ -204,6 +204,11 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	if sortField == "year" {
 		order = "desc"
 	}
+	typeFacet := "type_slug"
+	if cfg.ExactVehicleType {
+		// Some dealers list courtesy vehicles under the New type_slug.
+		typeFacet = "type"
+	}
 	maxPages := site.ListPage.Pagination.MaxPages
 	if maxPages <= 0 {
 		maxPages = 20
@@ -223,7 +228,7 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 			"page": page, "perPage": 100,
 			"sort": []map[string]string{{"field": sortField, "order": order}},
 			"filters": map[string]interface{}{"status": []string{"publish", "modified", "pend-sale"}},
-			"facetFilters": map[string][]string{"type_slug": vehicleTypes},
+			"facetFilters": map[string][]string{typeFacet: vehicleTypes},
 			"requestedFields": fields,
 		})
 		if err != nil {

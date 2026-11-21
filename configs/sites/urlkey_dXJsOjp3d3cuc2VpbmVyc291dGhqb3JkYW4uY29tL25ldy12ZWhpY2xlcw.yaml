@@ -1,0 +1,11 @@
+name: url::www.seinersouthjordan.com/new-vehicles
+baseUrl: https://www.seinersouthjordan.com/new-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "107102"
+    # Public Cars Commerce website search key shared by existing site templates.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleType: New
+    exactVehicleType: true
