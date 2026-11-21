@@ -1,0 +1,19 @@
+# Jerry Seiner Chevrolet publishes this search configuration on its all-inventory page.
+name: url::www.seinerchevy.com/all-inventory
+baseUrl: https://www.seinerchevy.com/all-inventory/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "6034834"
+    # This is the public search key embedded in the dealership's page.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleTypes:
+        - New
+        - Used
+        - Certified Used
+        - CarBravo
+        - Demo
+        - CTP
+        - Pre-Owned
+        - Certified Pre-Owned
