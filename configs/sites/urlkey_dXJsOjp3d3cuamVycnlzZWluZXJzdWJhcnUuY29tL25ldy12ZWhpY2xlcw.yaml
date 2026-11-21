@@ -1,0 +1,11 @@
+# Jerry Seiner Subaru of Valencia. Import only new vehicles with assigned stock.
+name: url::www.jerryseinersubaru.com/new-vehicles
+baseUrl: https://www.jerryseinersubaru.com/new-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "6075929"
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleType: New
+    skipUnstockedInTransit: true

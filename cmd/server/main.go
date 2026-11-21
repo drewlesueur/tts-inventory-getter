@@ -255,8 +255,13 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 
 		// Hybrid mode: statically cache-only URLs and URLs auto-flagged as
 		// bot-protected on this host are served from the synced cache.
+		template, _ := siteLoader.LoadByName(sites.CacheKeyForSourceURL(p.URL))
 		_, useCache := cacheOnly[store.NormalizeURLKey(p.URL)]
-		if !useCache {
+		if template.RequiresLiveInventory() && useCache {
+			event.Message = "Cache-only configuration prevents a fresh inventory pull and current in-transit counts"
+			return
+		}
+		if !useCache && !template.RequiresLiveInventory() {
 			if flagged, ferr := resultStore.IsProtectedURL(context.Background(), p.URL); ferr == nil && flagged {
 				useCache = true
 			}
@@ -300,7 +305,7 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 
             // Hybrid mode: bot-blocked -> flag for cache-first and fall back to
 			// any synced cache instead of upserting an empty result.
-			if len(res.Items) == 0 && scrape.IsBotProtectionFailure(res.Errors) {
+			if len(res.Items) == 0 && !site.RequiresLiveInventory() && scrape.IsBotProtectionFailure(res.Errors) {
 				if ferr := resultStore.FlagProtectedURL(context.Background(), store.ProtectedURL{SourceURL: p.URL, Reason: "bot-blocked in scheduled job"}); ferr == nil {
 					logger.Info("url flagged as bot-protected by scheduled job", zap.String("job", jobName), zap.String("url", p.URL))
 				}
@@ -334,7 +339,10 @@ func scrapeAllPages(logger *zap.Logger, cfg config.Config, scraper scrape.Servic
 			Items:        res.Items,
 			Errors:       res.Errors,
 		}
-		if len(res.Errors) > 0 {
+		if template.RequiresLiveInventory() && event.Status == "failed" {
+			record.Status = model.RunStatusFailed
+			record.FailureReason = scrape.DiagnosticText(event.Message)
+		} else if len(res.Errors) > 0 {
 			record.Status = model.RunStatusPartial
 		}
 		if err := resultStore.UpsertResult(context.Background(), record); err != nil {

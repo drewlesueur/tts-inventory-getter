@@ -27,6 +27,9 @@ func NewSQLiteResultStore(dsn string) (*SQLiteResultStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite allows one writer at a time. Queue this process's result and
+	// progress operations on one connection so concurrent pulls can finish.
+	db.SetMaxOpenConns(1)
 	s := &SQLiteResultStore{db: db}
 	if err := s.init(); err != nil {
 		_ = db.Close()

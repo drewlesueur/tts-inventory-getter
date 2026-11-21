@@ -218,7 +218,10 @@ func (s *Server) handleScrapeOnce(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, s.failedDiagnosticResponse("SITE_CONFIG_NOT_FOUND",siteErr,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
-	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+	// A live-only pull is tracked by result ID and never claims a shared cache key.
+	if site.RequiresLiveInventory() {
+		cacheKey = ""
+	} else if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, s.failedDiagnosticResponse("CACHE_INVALIDATION_FAILED",err,diagnostics,req.DealershipID,req.SourceURL))
 		return
@@ -289,7 +292,10 @@ func (s *Server) handleScrapeOnceAndResult(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, s.failedDiagnosticResponse("SITE_CONFIG_NOT_FOUND",siteErr,diagnostics,req.DealershipID,req.SourceURL))
 		return
 	}
-	if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
+	// A live-only pull is tracked by result ID and never claims a shared cache key.
+	if site.RequiresLiveInventory() {
+		cacheKey = ""
+	} else if err := s.store.DeleteIdempotency(r.Context(), cacheKey); err != nil {
         s.reportScrapeActivity(model.ScrapeResult{ResultID: req.IdempotencyKey, DealershipID: req.DealershipID, SourceURL: req.SourceURL, Status: model.RunStatusFailed, FailureReason: "Unable to prepare scrape: " + err.Error()}, scrapeActivityTrigger(req.Options))
 		writeJSON(w, http.StatusInternalServerError, s.failedDiagnosticResponse("CACHE_INVALIDATION_FAILED",err,diagnostics,req.DealershipID,req.SourceURL))
 		return
@@ -632,10 +638,20 @@ func (s *Server) isCacheOnly(rawURL string) bool {
 func (s *Server) serveCacheOnlyScrapeOnce(w http.ResponseWriter, r *http.Request, dealershipID, sourceURL, cacheKey string, triggers ...string) bool {
     trigger := "manual"
     if len(triggers) > 0 { trigger = triggers[0] }
+	diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
+	template, _ := s.sites.LoadByName(sites.CacheKeyForSourceURL(sourceURL))
+	if template.RequiresLiveInventory() {
+		if !s.isCacheOnly(sourceURL) {
+			return false
+		}
+		err := fmt.Errorf("Cache-only configuration prevents a fresh inventory pull and current in-transit counts")
+		s.reportScrapeActivity(model.ScrapeResult{DealershipID: dealershipID, SourceURL: sourceURL, Status: model.RunStatusFailed, FailureReason: err.Error()}, trigger)
+		writeJSON(w, http.StatusConflict, s.failedDiagnosticResponse("LIVE_INVENTORY_REQUIRED", err, diagnostics, dealershipID, sourceURL))
+		return true
+	}
 	if !s.shouldServeFromCache(r.Context(), sourceURL) {
 		return false
 	}
-	diagnosticContext, diagnostics := scrape.WithDiagnostics(r.Context())
     cached, err := s.cachedInventoryFor(diagnosticContext, sourceURL)
     diagnostics.Add(model.DiagnosticEvent{Stage:"cache_lookup",URL:sourceURL,Message:fmt.Sprintf("error=%v",err)})
 	if errors.Is(err, store.ErrNotFound) {
@@ -788,7 +804,14 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 	// Hybrid mode: cache-first URLs (statically configured or auto-flagged as
 	// bot-protected on this host) are served from the synced cache.
 	forceLive := req.Options != nil && req.Options.ForceLive != nil && *req.Options.ForceLive
-	if !forceLive && s.shouldServeFromCache(r.Context(), req.URL) {
+	template, _ := s.sites.LoadByName(sites.CacheKeyForSourceURL(req.URL))
+	if !forceLive && template.RequiresLiveInventory() && s.isCacheOnly(req.URL) {
+		err := fmt.Errorf("Cache-only configuration prevents a fresh inventory pull and current in-transit counts")
+		runActivity.FailureReason = err.Error()
+		writeJSON(w, http.StatusConflict, runDiagnosticErrorResponse("LIVE_INVENTORY_REQUIRED", err, diagnostics, runActivity.ResultID))
+		return
+	}
+	if !forceLive && !template.RequiresLiveInventory() && s.shouldServeFromCache(r.Context(), req.URL) {
 		cached, err := s.cachedInventoryFor(r.Context(), req.URL)
         diagnostics.Add(model.DiagnosticEvent{Stage:"cache_lookup",URL:req.URL,Message:fmt.Sprintf("cache-only=%t; error=%v",s.isCacheOnly(req.URL),err)})
 		if err == nil {
@@ -875,7 +898,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 
 	// Hybrid mode: a failed live scrape never returns empty when a synced cache
 	// exists. Bot-blocked failures additionally flag the URL for cache-first.
-	if len(result.Items) == 0 {
+	if len(result.Items) == 0 && !site.RequiresLiveInventory() {
 		if isBotProtectionFailure(result.Errors) {
 			s.flagProtected(r.Context(), req.URL, firstErrorMessage(result.Errors))
 		}
@@ -896,7 +919,7 @@ func (s *Server) handleScrapeRun(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-	} else if len(result.Items) > 0 && !s.isCacheOnly(req.URL) {
+	} else if len(result.Items) > 0 && !site.RequiresLiveInventory() && !s.isCacheOnly(req.URL) {
 		s.unflagProtected(r.Context(), req.URL)
 	}
 
@@ -1074,7 +1097,7 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 	// Scrape-once endpoints are live-only: never replace a failed live result
 	// with previously cached products.
 	bgCtx := context.Background()
-	if len(finalRecord.Items) > 0 && !s.isCacheOnly(sourceURL) {
+	if len(finalRecord.Items) > 0 && !site.RequiresLiveInventory() && !s.isCacheOnly(sourceURL) {
 		s.unflagProtected(bgCtx, sourceURL)
 	}
 
@@ -1123,6 +1146,9 @@ func isRetryableScrapeFailure(result scrape.RunResult) bool {
 		return false
 	}
 	for _, e := range result.Errors {
+		if e.Code == scrape.CarsCommerceUnstockedInTransit {
+			return false
+		}
 		message := strings.ToLower(e.Message)
 		if strings.Contains(message, "blocked redirect to local host") || strings.Contains(message, "blocked redirect to private host") {
 			return false
@@ -1367,6 +1393,10 @@ func isFreshScrapeCache(result model.ScrapeResult, now time.Time) bool {
 }
 
 func isFreshScrapeCacheForSite(result model.ScrapeResult, site config.SiteConfig, now time.Time) bool {
+	// A previous HTML scrape cannot report the current in-transit exclusions.
+	if site.RequiresLiveInventory() {
+		return false
+	}
 	if !isFreshScrapeCache(result, now) {
 		return false
 	}
