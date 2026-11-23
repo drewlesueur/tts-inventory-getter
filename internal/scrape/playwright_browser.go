@@ -3,7 +3,6 @@ package scrape
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -175,12 +174,7 @@ func runPlaywrightCommand(ctx context.Context, command, urlStr string, infiniteS
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	err = cmd.Run()
-	clean := cleanChildProcessGroup(cmd)
-	// Playwright may launch Chromium in a separate session. A killed driver
-	// cannot acknowledge browser shutdown, so keep the lease marked in that case.
-	if cmd.Process != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
-		clean = false
-	}
+	clean := browserCommandClean(ctx, cmd, err)
 	release(clean)
 	if !clean {
 		err = fmt.Errorf("could not verify Playwright process group cleanup")

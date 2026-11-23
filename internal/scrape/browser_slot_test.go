@@ -120,4 +120,7 @@ func TestBrowserChildCancellationReapsProcessGroup(t *testing.T) {
 	if !cleanChildProcessGroup(cmd) {
 		t.Fatal("cancelled process group survived")
 	}
+	if browserCommandClean(ctx, cmd, nil) {
+		t.Fatal("cancelled browser command should retain the recovery marker")
+	}
 }

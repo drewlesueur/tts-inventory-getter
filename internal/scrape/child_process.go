@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -38,4 +39,13 @@ func cleanChildProcessGroup(cmd *exec.Cmd) bool {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+// A killed Playwright driver may leave a browser in a separate session.
+// Keep the marker when the driver could not acknowledge shutdown.
+func browserCommandClean(ctx context.Context, cmd *exec.Cmd, runErr error) bool {
+	clean := cleanChildProcessGroup(cmd)
+	return clean && (cmd.Process == nil ||
+		(ctx.Err() == nil && !errors.Is(runErr, exec.ErrWaitDelay) &&
+			cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0))
 }

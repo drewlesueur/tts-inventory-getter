@@ -223,7 +223,8 @@ packages or browser assets at startup. Set `PYTHON_BIN` to the verified absolute
 a project `.venv` with `pyvenv.cfg`, then system Python. Check the two Python
 fetcher startup log entries for the selected interpreter.
 
-Browser launches and CDP operations share a single slot per Unix account and
+Inventory and NHTSA browser launches and CDP operations share a single slot
+per Unix account and
 shared `/tmp` on the host. Go and Python acquire it at the browser boundary.
 HTTP-only work is outside the slot. A waiter gives up after 10 seconds or when
 its job is cancelled. `SCRAPE_CONCURRENCY` still controls inline detail workers
