@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -89,10 +90,18 @@ func run() (runErr error) {
 	defer stop()
 	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
 	defer cancel()
+	browserSlot, err := scrape.AcquireBrowserSlot(ctx)
+	if err != nil {
+		return err
+	}
 	alloc, release := chromedp.NewRemoteAllocator(ctx, *cdp)
-	defer release()
 	tab, closeTab := chromedp.NewContext(alloc)
-	defer closeTab()
+	closeBrowser := sync.OnceFunc(func() {
+		closeTab()
+		release()
+		browserSlot(true)
+	})
+	defer closeBrowser()
 	log.Print("[chrome] connecting; a dedicated scrape tab will open. Complete any challenge in that tab.")
 	if err := chromedp.Run(tab); err != nil {
 		return fmt.Errorf("connect to Chrome (start it with remote debugging first): %w", err)
@@ -171,6 +180,7 @@ func run() (runErr error) {
 		result.Items[i] = updated
 		log.Printf("[detail] %d/%d: %s; %d photos", i+1, len(result.Items), updated.Title, len(updated.Images))
 	}
+	closeBrowser()
 	result.Complete, result.ItemCount = true, len(result.Items)
 	if err := save(*output, result); err != nil {
 		return err

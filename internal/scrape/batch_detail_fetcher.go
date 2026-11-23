@@ -136,6 +136,7 @@ func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (outpu
 		}
 	}
 	cmd := exec.CommandContext(ctx, b.PythonBin, args...)
+	manageChildProcess(cmd)
 	cmd.Stdin = bytes.NewReader(input)
 	var stderr boundedDiagnosticBuffer
 	cmd.Stderr = &stderr
@@ -185,7 +186,7 @@ func (b *BatchDetailFetcher) fetchAll(ctx context.Context, urls []string) (outpu
 
     // A scanner limit/read failure stops consumption. Close the pipe and stop
     // the child before waiting so a writer cannot hang on an undrained pipe.
-    if scanner.Err()!=nil { _=stdout.Close(); _=cmd.Process.Kill() }
+    if scanner.Err()!=nil { _=stdout.Close(); _=cmd.Cancel() }
 	waitErr := cmd.Wait()
     recordSubprocessDiagnostics(ctx,"python_details","",stderr.String())
     for u, html := range results { recordPageDiagnostic(ctx,"detail_page","python_details",u,"",html,0,started,nil) }

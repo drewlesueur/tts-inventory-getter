@@ -61,13 +61,8 @@ func datadomeFromHeader(cookieHeader string) string {
 // dws-* widgets) answers plain HTTP with a card-less shell that looks like a
 // success, so a shell is only worth retrying in a browser that can hydrate it.
 func (c *CurlFetcher) FetchRendered(ctx context.Context, rawURL, cookieHeader string) (string, error) {
-	// Hydrating a client-rendered SRP in a real browser takes far longer than a
-	// plain HTTP GET, so don't inherit a deadline sized for the latter.
-	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) < renderedFetchTimeout {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), renderedFetchTimeout)
-		defer cancel()
-	}
+	ctx, cancel := context.WithTimeout(ctx, renderedFetchTimeout)
+	defer cancel()
 	return c.fetchWithCookieOpts(ctx, rawURL, datadomeFromHeader(cookieHeader), true)
 }
 
@@ -88,6 +83,7 @@ func (c *CurlFetcher) fetchWithCookieOpts(ctx context.Context, rawURL, cookie st
 	}
 
 	cmd := exec.CommandContext(ctx, c.PythonBin, args...)
+	manageChildProcess(cmd)
 	if skipHTTP {
 		cmd.Env = append(os.Environ(), "FETCH_SKIP_HTTP=1")
 	}

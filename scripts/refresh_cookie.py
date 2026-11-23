@@ -107,12 +107,13 @@ def try_curl_cffi(url: str) -> Optional[str]:
 async def try_patchright(url: str) -> Optional[str]:
     try:
         from patchright.async_api import async_playwright
+        from browser_slot import guarded_async_browser
     except ImportError:
         print("[patchright] not installed", file=sys.stderr)
         return None
 
     print("[patchright] launching...", file=sys.stderr)
-    async with async_playwright() as p:
+    async with guarded_async_browser(async_playwright) as p:
         browser = await p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],

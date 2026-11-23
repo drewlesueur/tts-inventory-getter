@@ -204,7 +204,7 @@ func setDefaults() {
 	viper.SetDefault("ENABLE_CODEX_DISCOVERY", false)
 	viper.SetDefault("OPENAI_MODEL", "gpt-4.1-mini")
 	viper.SetDefault("PLAYWRIGHT_COMMAND", `node -e 'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'`)
-	viper.SetDefault("PYTHON_BIN", "python3")
+	viper.SetDefault("PYTHON_BIN", "")
 	viper.SetDefault("FETCH_SCRIPT_PATH", "scripts/fetch_page.py")
 	viper.SetDefault("DETAIL_SCRIPT_PATH", "scripts/fetch_details.py")
 	// A dealer SRP routinely runs past 150 vehicles, and anything past this cap

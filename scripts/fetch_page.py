@@ -198,13 +198,14 @@ def try_brave_cdp(url: str):
 
     try:
         from playwright.sync_api import sync_playwright
+        from browser_slot import guarded_sync_browser
     except ImportError:
         print("[brave] playwright not installed", file=sys.stderr)
         return None, None
 
     print(f"[brave] fetching via user browser at {cdp}", file=sys.stderr)
     try:
-        with sync_playwright() as p:
+        with guarded_sync_browser(sync_playwright) as p:
             browser = p.chromium.connect_over_cdp(cdp)
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = ctx.new_page()
@@ -325,13 +326,14 @@ def try_brave_cdp(url: str):
 async def try_camoufox(url: str):
     try:
         from camoufox.async_api import AsyncCamoufox
+        from browser_slot import guarded_async_browser
     except ImportError:
         print("[camoufox] not installed: pip install camoufox", file=sys.stderr)
         return None, None
 
     print("[camoufox] launching Firefox...", file=sys.stderr)
     try:
-        async with new_camoufox() as browser:
+        async with guarded_async_browser(new_camoufox) as browser:
             page = await browser.new_page()
 
             # Warm-up: hit the site root first so DataDome establishes a trusted

@@ -3,6 +3,7 @@ package scrape
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -162,13 +163,28 @@ func (p PlaywrightBrowser) Render(ctx context.Context, urlStr string, site confi
 }
 
 func runPlaywrightCommand(ctx context.Context, command, urlStr string, infiniteScroll bool) (string, string, error) {
+	release, err := AcquireBrowserSlot(ctx)
+	if err != nil {
+		return "", "", err
+	}
 	script := command + " " + strconv.Quote(urlStr) + " " + strconv.FormatBool(infiniteScroll)
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
+	manageChildProcess(cmd)
 	var out bytes.Buffer
 	var errOut boundedDiagnosticBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
-	err := cmd.Run()
+	err = cmd.Run()
+	clean := cleanChildProcessGroup(cmd)
+	// Playwright may launch Chromium in a separate session. A killed driver
+	// cannot acknowledge browser shutdown, so keep the lease marked in that case.
+	if cmd.Process != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
+		clean = false
+	}
+	release(clean)
+	if !clean {
+		err = fmt.Errorf("could not verify Playwright process group cleanup")
+	}
     recordSubprocessDiagnostics(ctx, "playwright", urlStr, errOut.String())
 	return out.String(), errOut.String(), err
 }
