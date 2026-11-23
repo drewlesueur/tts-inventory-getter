@@ -86,7 +86,8 @@ class FakeBrowser:
     async def __aenter__(self):
         return self
 
-    async def __aexit__(self, *_):
+    async def __aexit__(self, kind, value, traceback):
+        assert kind is ValueError and str(value) == "navigation failure"
         assert os.stat(sys.argv[2]).st_size > 0
 
 async def check():

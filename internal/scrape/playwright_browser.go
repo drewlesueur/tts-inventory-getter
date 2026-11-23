@@ -54,21 +54,24 @@ async function exhaustInfiniteScroll(page) {
     headless: true,
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
   });
-  const ctx = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    viewport: { width: 1366, height: 768 },
-    locale: "en-US",
-    extraHTTPHeaders: {
-      "Accept-Language": "en-US,en;q=0.9",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-    }
-  });
-  const page = await ctx.newPage();
-  const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
-  console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
-  await exhaustInfiniteScroll(page);
-  process.stdout.write(await page.content());
-  await browser.close();
+  try {
+    const ctx = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      viewport: { width: 1366, height: 768 },
+      locale: "en-US",
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+      }
+    });
+    const page = await ctx.newPage();
+    const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
+    console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
+    await exhaustInfiniteScroll(page);
+    process.stdout.write(await page.content());
+  } finally {
+    await browser.close();
+  }
 })().catch((e) => { console.error(e); process.exit(1); });
 `
 
@@ -105,18 +108,21 @@ async function exhaustInfiniteScroll(page) {
     headless: true,
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
   });
-  const ctx = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    viewport: { width: 1366, height: 768 },
-    locale: "en-US"
-  });
-  const page = await ctx.newPage();
-  await page.addInitScript(() => { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); });
-  const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
-  console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
-  await exhaustInfiniteScroll(page);
-  process.stdout.write(await page.content());
-  await browser.close();
+  try {
+    const ctx = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      viewport: { width: 1366, height: 768 },
+      locale: "en-US"
+    });
+    const page = await ctx.newPage();
+    await page.addInitScript(() => { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); });
+    const response = await page.goto(process.argv[1], { waitUntil: "networkidle" });
+    console.error("SCRAPE_DIAGNOSTIC " + JSON.stringify({stage:"http_response",method:"playwright",url:process.argv[1],finalUrl:page.url(),httpStatus:response ? response.status() : 0}));
+    await exhaustInfiniteScroll(page);
+    process.stdout.write(await page.content());
+  } finally {
+    await browser.close();
+  }
 })().catch((e) => { console.error(e); process.exit(1); });
 `
 
@@ -166,8 +172,8 @@ func runPlaywrightCommand(ctx context.Context, command, urlStr string, infiniteS
 	if err != nil {
 		return "", "", err
 	}
-	script := command + " " + strconv.Quote(urlStr) + " " + strconv.FormatBool(infiniteScroll)
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", script)
+	// The configured command is shell syntax. Keep request data in argv.
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command + ` "$1" "$2"`, "playwright", urlStr, strconv.FormatBool(infiniteScroll))
 	manageChildProcess(cmd)
 	var out bytes.Buffer
 	var errOut boundedDiagnosticBuffer

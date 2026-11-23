@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager, contextmanager
 import fcntl
 import os
 import stat
+import sys
 import time
 from pathlib import Path
 
@@ -60,8 +61,23 @@ async def guarded_async_browser(factory):
         manager = factory()
         lease.clean = False
         try:
-            yield await manager.__aenter__()
-        finally:
+            browser = await manager.__aenter__()
+        except BaseException as launch_error:
+            # Startup can fail after spawning a driver. Preserve the launch error.
+            try:
+                await manager.__aexit__(*sys.exc_info())
+                lease.clean = True
+            except BaseException as cleanup_error:
+                launch_error.add_note(f"Browser cleanup failed: {cleanup_error}")
+            raise
+        try:
+            yield browser
+        except BaseException:
+            suppressed = await manager.__aexit__(*sys.exc_info())
+            lease.clean = True
+            if not suppressed:
+                raise
+        else:
             await manager.__aexit__(None, None, None)
             lease.clean = True
     finally:
@@ -83,8 +99,23 @@ def guarded_sync_browser(factory):
         manager = factory()
         lease.clean = False
         try:
-            yield manager.__enter__()
-        finally:
+            browser = manager.__enter__()
+        except BaseException as launch_error:
+            # Startup can fail after spawning a driver. Preserve the launch error.
+            try:
+                manager.__exit__(*sys.exc_info())
+                lease.clean = True
+            except BaseException as cleanup_error:
+                launch_error.add_note(f"Browser cleanup failed: {cleanup_error}")
+            raise
+        try:
+            yield browser
+        except BaseException:
+            suppressed = manager.__exit__(*sys.exc_info())
+            lease.clean = True
+            if not suppressed:
+                raise
+        else:
             manager.__exit__(None, None, None)
             lease.clean = True
     finally:

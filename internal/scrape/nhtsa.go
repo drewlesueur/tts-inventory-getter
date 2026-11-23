@@ -30,9 +30,8 @@ func (b *PlaywrightBrowser) NHTSALookup(ctx context.Context, vin string, date ti
 	// SIGTERM lets the adapter close Chromium. WaitDelay bounds cleanup if Node hangs.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
-	var output, stderr bytes.Buffer
+	var output bytes.Buffer
 	cmd.Stdout = &output
-	cmd.Stderr = &stderr
 	err = cmd.Run()
 	clean := browserCommandClean(ctx, cmd, err)
 	release(clean)
