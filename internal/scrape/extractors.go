@@ -110,6 +110,22 @@ func (d DOMExtractor) Extract(_ context.Context, html, pageURL string, site conf
 			}
 			item.VIN = validVINCandidate(strings.TrimPrefix(strings.TrimSpace(raw), "vehicle-id-"))
 		}
+		if s.HasClass("dws-listing-item") {
+			if item.VIN == "" {
+				for _, key := range []string{"data-vin", "data-vehicle-vin"} {
+					if item.VIN = validVINCandidate(s.AttrOr(key, "")); item.VIN != "" {
+						break
+					}
+				}
+			}
+			if item.StockID == "" {
+				for _, key := range []string{"data-vehicle-stock-no", "data-stock-number", "data-stock", "data-sn"} {
+					if item.StockID = strings.TrimSpace(s.AttrOr(key, "")); item.StockID != "" {
+						break
+					}
+				}
+			}
+		}
 		normalized := NormalizeItem(pageURL, item)
 		if !looksLikeUsefulListing(normalized) {
 			return

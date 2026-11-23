@@ -1,0 +1,12 @@
+name: url::www.brownandbrownauto.com/inventory
+baseUrl: https://www.brownandbrownauto.com/inventory/
+listPage:
+    waitSelectors:
+        - .dws-listing-item
+    cardSelector: .dws-listing-item
+    titleSelector: a.vehicle-title, h2, h3
+    urlSelector: "a[href*='/inventory/']:not([href$='/inventory/']):not([href*='/inventory/?']):not([href*='/inventory/#'])"
+    mileageSelector: .dws-vehicle-field-mileage .dws-vehicle-listing-item-field-value
+    imageSelector: img
+    pagination:
+        maxPages: 30

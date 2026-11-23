@@ -50,3 +50,22 @@ func TestPrefixedVehicleIDAttrIgnoresNonVIN(t *testing.T) {
 		t.Fatalf("VIN = %q, want empty for a non-VIN id", items[0].VIN)
 	}
 }
+
+func TestBrownInventoryCards(t *testing.T) {
+	site, err := config.NewLoader("../../configs/sites").LoadByName("url::www.brownandbrownauto.com/inventory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := `<ul><li><a href="/inventory/?sort=price">Price</a></li></ul>
+	<div class="dws-listing-item" data-vin="WDCYC7HJ0KX303526" data-stock="303526">
+	<a href="/inventory/">Inventory</a><a href="/inventory/mercedes/g-class/303526/">View details</a>
+	<h3>2019 Mercedes G-Class</h3><span>$35,000</span></div>`
+	items, errs := (DOMExtractor{}).Extract(context.Background(), html, site.BaseURL, site)
+	if len(errs) != 0 || len(items) != 1 {
+		t.Fatalf("items=%+v errors=%+v", items, errs)
+	}
+	item := items[0]
+	if item.VIN != "WDCYC7HJ0KX303526" || item.StockID != "303526" || item.URL != site.BaseURL+"mercedes/g-class/303526/" {
+		t.Fatalf("wrong vehicle identity or detail URL: %+v", item)
+	}
+}
