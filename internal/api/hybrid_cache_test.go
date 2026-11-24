@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
+	"sync"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -365,6 +368,134 @@ func TestScrapeOnceFromCacheReplacesStaleIdempotencyRow(t *testing.T) {
 		if !bytes.Contains(w.Body.Bytes(), []byte(`"progressStage":"completed_from_cache"`)) ||
 			!bytes.Contains(w.Body.Bytes(), []byte(`"totalItems":2`)) {
 			t.Fatalf("attempt %d: expected 2 cached items, body=%s", attempt, w.Body.String())
+		}
+	}
+}
+
+func TestStockedInventoryRequiresFreshManualPull(t *testing.T) {
+	const source = "https://stock-fixture.invalid/new-vehicles/"
+	const dealer = "stock-fixture"
+	cfg := config.Config{ServiceKey: "fixture-key", RequestBodyLimitMB: 2, RateLimitRPS: 30, RateLimitBurst: 30}
+	loader := config.NewLoader(t.TempDir())
+	key := sites.CacheKeyForSourceURL(source)
+	if err := loader.SaveByName(key, config.SiteConfig{Name: key, BaseURL: source,
+		CarsCommerce: &config.CarsCommerceConfig{SkipUnstockedInTransit: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewMemoryResultStore()
+	ctx := context.Background()
+	if err := st.FlagProtectedURL(ctx, store.ProtectedURL{SourceURL: source}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCachedInventory(ctx, store.CachedInventory{SourceURL: source,
+		Items: []model.InventoryItem{{StockID: "stale-stock"}}, UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/scrape/once", nil)
+	s := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, st, testMetrics(), nil, nil, nil)
+	if s.serveCacheOnlyScrapeOnce(httptest.NewRecorder(), req, dealer, source, "fixture") {
+		t.Fatal("old protection flag intercepted the configured provider pull")
+	}
+	run := httptest.NewRequest(http.MethodPost, "/v1/scrape/run", bytes.NewBufferString(`{"url":"`+source+`"}`))
+	run.Header.Set("X-Service-Key", "fixture-key")
+	run.Header.Set("Content-Type", "application/json")
+	empty := httptest.NewRecorder()
+	s.Router().ServeHTTP(empty, run)
+	// The incomplete fixture config fails before any provider request. Old cache
+	// entries must still stay out of the result for this live-only source.
+	if empty.Code != http.StatusOK || !bytes.Contains(empty.Body.Bytes(), []byte("CARS_COMMERCE_FETCH_FAILED")) ||
+		bytes.Contains(empty.Body.Bytes(), []byte("stale-stock")) {
+		t.Fatalf("failed live pull returned %d: %s", empty.Code, empty.Body.String())
+	}
+	cfg.CacheOnlyURLs = []string{source}
+	s = NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, st, testMetrics(), nil, nil, nil)
+	w := httptest.NewRecorder()
+	if !s.serveCacheOnlyScrapeOnce(w, req, dealer, source, "fixture") ||
+		w.Code != http.StatusConflict || !bytes.Contains(w.Body.Bytes(), []byte("LIVE_INVENTORY_REQUIRED")) ||
+		bytes.Contains(w.Body.Bytes(), []byte("stale-stock")) {
+		t.Fatalf("explicit cache-only configuration returned %d: %s", w.Code, w.Body.String())
+	}
+}
+
+type stockPullTransport func(*http.Request) (*http.Response, error)
+
+func (f stockPullTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestOverlappingFreshStockPullsKeepBothResults(t *testing.T) {
+	const source = "https://stock-fixture.invalid/new-vehicles/"
+	const dealer = "stock-fixture"
+	cfg := config.Config{ServiceKey: "fixture-key", RequestBodyLimitMB: 2, RateLimitRPS: 30, RateLimitBurst: 30, DefaultRunTimeoutSec: 5}
+	loader := config.NewLoader(t.TempDir())
+	key := sites.CacheKeyForSourceURL(source)
+	if err := loader.SaveByName(key, config.SiteConfig{Name: key, BaseURL: source,
+		CarsCommerce: &config.CarsCommerceConfig{CCID: "1234", SearchKey: "fixture", VehicleType: "New", SkipUnstockedInTransit: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.NewSQLiteResultStore(filepath.Join(t.TempDir(), "overlap.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	transport := http.DefaultTransport
+	defer func() { http.DefaultTransport = transport }()
+	http.DefaultTransport = stockPullTransport(func(req *http.Request) (*http.Response, error) {
+		select {
+		case <-release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+		body := `{"data":{"listings":[{"vin":"4S4GUHD68T3726848","stock":"6N5625","type":"New","vdp_url":"/inventory/new-test"}]},"meta":{"pagination":{"current_page":1,"total_pages":1,"total":1,"count":1}}}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	s := NewServer(cfg, zap.NewNop(), scrape.Service{}, loader, st, testMetrics(), nil, nil, nil)
+	router := s.Router()
+	startPull := func() string {
+		req := httptest.NewRequest(http.MethodPost, "/v1/scrape/once",
+			bytes.NewBufferString(`{"dealershipId":"`+dealer+`","sourceUrl":"`+source+`"}`))
+		req.Header.Set("X-Service-Key", "fixture-key")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		var response struct{ ResultID string }
+		if w.Code != http.StatusAccepted || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.ResultID == "" {
+			t.Fatalf("scrape start returned %d: %s", w.Code, w.Body.String())
+		}
+		return response.ResultID
+	}
+	first, second := startPull(), startPull()
+	if first == second {
+		t.Fatal("independent pulls shared a result ID")
+	}
+	unblock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for _, id := range []string{first, second} {
+		for {
+			result, err := st.GetResult(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status == model.RunStatusSuccess && len(result.Items) == 1 && result.IdempotencyKey == "" {
+				break
+			}
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				t.Fatalf("pull %s failed to publish its result, last status %q", id, result.Status)
+			}
 		}
 	}
 }

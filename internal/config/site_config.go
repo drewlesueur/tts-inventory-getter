@@ -31,6 +31,12 @@ type CarsCommerceConfig struct {
 	SearchKey   string `yaml:"searchKey" json:"searchKey"`
 	VehicleType string `yaml:"vehicleType" json:"vehicleType"`
 	VehicleTypes []string `yaml:"vehicleTypes,omitempty" json:"vehicleTypes,omitempty"`
+	SkipUnstockedInTransit bool `yaml:"skipUnstockedInTransit,omitempty" json:"skipUnstockedInTransit,omitempty"`
+}
+
+// Cache-only copies have no in-transit counts for this adapter.
+func (s SiteConfig) RequiresLiveInventory() bool {
+	return s.CarsCommerce != nil && s.CarsCommerce.SkipUnstockedInTransit
 }
 
 type ListPageConfig struct {

@@ -18,13 +18,17 @@ import (
 	"github.com/drewlesueur/tts-inventory-getter/internal/model"
 )
 
+const CarsCommerceUnstockedInTransit = "CARS_COMMERCE_UNSTOCKED_IN_TRANSIT"
+
 var carsCommerceVIN = regexp.MustCompile(`^[A-HJ-NPR-Z0-9]{17}$`)
+var carsCommerceStockKey = regexp.MustCompile(`[^A-Z0-9]`)
 var carsCommerceTypeFilter = regexp.MustCompile(`^_dFR\[type\]\[[0-9]+\]$`)
 
 type carsCommerceListing struct {
 	VIN     string          `json:"vin"`
 	Stock   string          `json:"stock"`
 	Type    string          `json:"type"`
+	InTransit string        `json:"in_transit"`
 	Year    json.RawMessage `json:"year"`
 	Make    string          `json:"make"`
 	Model   string          `json:"model"`
@@ -209,13 +213,18 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	items := make([]model.InventoryItem, 0)
 	seenVIN, seenStock := map[string]bool{}, map[string]bool{}
 	total, pages := -1, 1
+	excluded := 0
+	fields := []string{"vin", "stock", "type", "year", "make", "model", "trim", "mileage", "vdp_url", "pricing", "styles", "mechanical", "body_details", "passenger_capacity", "media", "extra_fields"}
+	if cfg.SkipUnstockedInTransit {
+		fields = append(fields, "in_transit")
+	}
 	for page := 1; page <= pages; page++ {
 		body, err := json.Marshal(map[string]interface{}{
 			"page": page, "perPage": 100,
 			"sort": []map[string]string{{"field": sortField, "order": order}},
 			"filters": map[string]interface{}{"status": []string{"publish", "modified", "pend-sale"}},
 			"facetFilters": map[string][]string{"type_slug": vehicleTypes},
-			"requestedFields": []string{"vin", "stock", "type", "year", "make", "model", "trim", "mileage", "vdp_url", "pricing", "styles", "mechanical", "body_details", "passenger_capacity", "media", "extra_fields"},
+			"requestedFields": fields,
 		})
 		if err != nil {
 			return fail(err)
@@ -263,20 +272,50 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 			item := NormalizeItem(sourceURL, carsCommerceItem(row))
 			vin := strings.ToUpper(strings.TrimSpace(row.VIN))
 			stock := normalizeStockID(row.Stock)
-			if !carsCommerceVIN.MatchString(vin) || validVINCandidate(vin) == "" || item.VIN != vin || isMissingStockID(stock) || item.StockID != stock || item.URL == "" || seenVIN[item.VIN] || seenStock[item.StockID] {
+			if !carsCommerceVIN.MatchString(vin) || validVINCandidate(vin) == "" || item.VIN != vin || item.URL == "" || seenVIN[vin] {
 				return fail(fmt.Errorf("missing or duplicate vehicle identity on Cars Commerce page %d", page))
 			}
-			seenVIN[item.VIN], seenStock[item.StockID] = true, true
+			seenVIN[vin] = true
+			if cfg.SkipUnstockedInTransit && strings.EqualFold(row.InTransit, "yes") && strings.TrimSpace(row.Stock) == "" {
+				excluded++
+				continue
+			}
+			stockKey := stock
+			if cfg.SkipUnstockedInTransit {
+				// Use the same stock key as the TapToSign importer.
+				stockKey = carsCommerceStockKey.ReplaceAllString(stock, "")
+				if stockKey == "" || stockKey == vin || stock == "NULL" {
+					return fail(fmt.Errorf("missing assigned stock on Cars Commerce page %d", page))
+				}
+			}
+			if isMissingStockID(stock) || item.StockID != stock || seenStock[stockKey] {
+				return fail(fmt.Errorf("missing or duplicate vehicle identity on Cars Commerce page %d", page))
+			}
+			seenStock[stockKey] = true
+			if cfg.SkipUnstockedInTransit {
+				item.Website = item.URL
+			}
 			items = append(items, applyItemAliases(item, opts.DealershipID, sourceURL))
 		}
 		reportItemsProgress(opts, "pages_collected", items)
 	}
-	if len(items) != total || total == 0 {
-		return fail(fmt.Errorf("Cars Commerce returned %d of %d vehicles", len(items), total))
+	if len(items)+excluded != total || total == 0 {
+		return fail(fmt.Errorf("Cars Commerce returned %d of %d vehicles", len(items)+excluded, total))
 	}
 	if site.ListPage.MaxItems > 0 && len(items) > site.ListPage.MaxItems {
 		return fail(fmt.Errorf("Cars Commerce inventory exceeds configured item limit"))
 	}
+	result := RunResult{Items: items}
+	if excluded > 0 {
+		vehicles := "vehicles"
+		if excluded == 1 {
+			vehicles = "vehicle"
+		}
+		result.Errors = []model.StructuredError{{
+			Code: CarsCommerceUnstockedInTransit,
+			Message: fmt.Sprintf("%d in-transit %s excluded for missing stock numbers. %d of %d vehicles have stock numbers and are eligible for import.", excluded, vehicles, len(items), total),
+		}}
+	}
 	reportItemsProgress(opts, "completed", items)
-	return RunResult{Items: items}
+	return result
 }
