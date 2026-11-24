@@ -33,6 +33,8 @@ type CarsCommerceConfig struct {
 	VehicleTypes []string `yaml:"vehicleTypes,omitempty" json:"vehicleTypes,omitempty"`
 	ExactVehicleType bool `yaml:"exactVehicleType,omitempty" json:"exactVehicleType,omitempty"`
 	SkipUnstockedInTransit bool `yaml:"skipUnstockedInTransit,omitempty" json:"skipUnstockedInTransit,omitempty"`
+	StockSortTieBreaker bool `yaml:"stockSortTieBreaker,omitempty" json:"stockSortTieBreaker,omitempty"`
+	ExcludeConflictingStock bool `yaml:"excludeConflictingStock,omitempty" json:"excludeConflictingStock,omitempty"`
 }
 
 // Cache-only copies have no in-transit counts for this adapter.

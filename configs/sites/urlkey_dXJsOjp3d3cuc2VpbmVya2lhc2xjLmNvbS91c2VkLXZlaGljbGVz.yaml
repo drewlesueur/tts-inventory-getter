@@ -1,0 +1,15 @@
+# Jerry Seiner Salt Lake Kia used inventory.
+name: url::www.seinerkiaslc.com/used-vehicles
+baseUrl: https://www.seinerkiaslc.com/used-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "5355869"
+    # Public Cars Commerce website search key used by the existing adapter.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleTypes:
+        - Used
+        - Certified Used
+    stockSortTieBreaker: true
+    excludeConflictingStock: true

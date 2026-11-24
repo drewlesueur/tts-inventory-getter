@@ -1067,6 +1067,12 @@ func (s *Server) runScrapeAsync(resultID, dealershipID, sourceURL, idempotencyKe
 			record.FailureReason = firstErrorMessage(result.Errors)
 		} else if len(result.Errors) > 0 {
 			record.Status = model.RunStatusPartial
+			for _, issue := range result.Errors {
+				if issue.Code == "DUPLICATE_IDENTITY" && issue.ItemURL != "" {
+					record.FailedItems++
+					record.TotalItems++
+				}
+			}
 		}
 		record.LastError = firstErrorMessage(result.Errors)
 		if record.Status == model.RunStatusPartial {

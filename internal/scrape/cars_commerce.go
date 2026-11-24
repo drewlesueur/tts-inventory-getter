@@ -204,6 +204,11 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	if sortField == "year" {
 		order = "desc"
 	}
+	sortOrder := []map[string]string{{"field": sortField, "order": order}}
+	if cfg.StockSortTieBreaker {
+		// Keep rows with the same price or year from shifting between pages.
+		sortOrder = append(sortOrder, map[string]string{"field": "stock", "order": "asc"})
+	}
 	typeFacet := "type_slug"
 	if cfg.ExactVehicleType {
 		// Some dealers list courtesy vehicles under the New type_slug.
@@ -216,7 +221,7 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	client := &http.Client{Timeout: 30 * time.Second}
 	endpoint := "https://websites-search.api.carscommerce.inc/api/v1/listings/" + cfg.CCID + "/search"
 	items := make([]model.InventoryItem, 0)
-	seenVIN, seenStock := map[string]bool{}, map[string]bool{}
+	seenVIN, stockCounts := map[string]bool{}, map[string]int{}
 	total, pages := -1, 1
 	excluded := 0
 	fields := []string{"vin", "stock", "type", "year", "make", "model", "trim", "mileage", "vdp_url", "pricing", "styles", "mechanical", "body_details", "passenger_capacity", "media", "extra_fields"}
@@ -226,7 +231,7 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	for page := 1; page <= pages; page++ {
 		body, err := json.Marshal(map[string]interface{}{
 			"page": page, "perPage": 100,
-			"sort": []map[string]string{{"field": sortField, "order": order}},
+			"sort": sortOrder,
 			"filters": map[string]interface{}{"status": []string{"publish", "modified", "pend-sale"}},
 			"facetFilters": map[string][]string{typeFacet: vehicleTypes},
 			"requestedFields": fields,
@@ -286,17 +291,17 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 				continue
 			}
 			stockKey := stock
-			if cfg.SkipUnstockedInTransit {
+			if cfg.SkipUnstockedInTransit || cfg.ExcludeConflictingStock {
 				// Use the same stock key as the TapToSign importer.
 				stockKey = carsCommerceStockKey.ReplaceAllString(stock, "")
-				if stockKey == "" || stockKey == vin || stock == "NULL" {
+				if stockKey == "" || (cfg.SkipUnstockedInTransit && (stockKey == vin || stock == "NULL")) {
 					return fail(fmt.Errorf("missing assigned stock on Cars Commerce page %d", page))
 				}
 			}
-			if isMissingStockID(stock) || item.StockID != stock || seenStock[stockKey] {
+			if isMissingStockID(stock) || item.StockID != stock || (!cfg.ExcludeConflictingStock && stockCounts[stockKey] > 0) {
 				return fail(fmt.Errorf("missing or duplicate vehicle identity on Cars Commerce page %d", page))
 			}
-			seenStock[stockKey] = true
+			stockCounts[stockKey]++
 			if cfg.SkipUnstockedInTransit {
 				item.Website = item.URL
 			}
@@ -310,16 +315,33 @@ func scrapeCarsCommerce(ctx context.Context, sourceURL string, site config.SiteC
 	if site.ListPage.MaxItems > 0 && len(items) > site.ListPage.MaxItems {
 		return fail(fmt.Errorf("Cars Commerce inventory exceeds configured item limit"))
 	}
-	result := RunResult{Items: items}
+	var conflicts []model.StructuredError
+	if cfg.ExcludeConflictingStock {
+		// Reject every row with an ambiguous stock after checking all source pages.
+		usable := items[:0]
+		for _, item := range items {
+			stockKey := carsCommerceStockKey.ReplaceAllString(item.StockID, "")
+			if stockCounts[stockKey] > 1 {
+				conflicts = append(conflicts, model.StructuredError{
+					Code: "DUPLICATE_IDENTITY", ItemURL: item.URL,
+					Message: fmt.Sprintf("Stock number %s is shared by multiple VINs; vehicle excluded from this pull", item.StockID),
+				})
+				continue
+			}
+			usable = append(usable, item)
+		}
+		items = usable
+	}
+	result := RunResult{Items: items, Errors: conflicts}
 	if excluded > 0 {
 		vehicles := "vehicles"
 		if excluded == 1 {
 			vehicles = "vehicle"
 		}
-		result.Errors = []model.StructuredError{{
+		result.Errors = append(result.Errors, model.StructuredError{
 			Code: CarsCommerceUnstockedInTransit,
 			Message: fmt.Sprintf("%d in-transit %s excluded for missing stock numbers. %d of %d vehicles have stock numbers and are eligible for import.", excluded, vehicles, len(items), total),
-		}}
+		})
 	}
 	reportItemsProgress(opts, "completed", items)
 	return result
