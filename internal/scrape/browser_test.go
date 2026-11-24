@@ -2,6 +2,7 @@ package scrape
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -60,5 +61,13 @@ func TestChromeBrowserErrorfSuppressesAdoptedStyleSheetsEvent(t *testing.T) {
 	chromeBrowserErrorf("browser warning %s", "kept")
 	if !strings.Contains(output.String(), "ERROR: browser warning kept") {
 		t.Fatalf("expected other browser errors to remain logged, got %q", output.String())
+	}
+}
+
+func TestPlaywrightCommandPreservesURLArgument(t *testing.T) {
+	url := "https://example.invalid/inventory?q=$HOME&model=two words"
+	output, _, err := runPlaywrightCommand(context.Background(), "printf '%s\\n'", url, true)
+	if err != nil || output != url+"\ntrue\n" {
+		t.Fatalf("unexpected launcher arguments: %q, %v", output, err)
 	}
 }

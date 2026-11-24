@@ -121,6 +121,11 @@ func main() {
 	s.SetDailyUpsertJob(func() {
 		runDailyUpsert(logger, cfg, scraper, siteLoader, discoverClient, resultStore, invClient)
 	})
+	stopNHTSA, err := s.StartNHTSA(ctx)
+	if err != nil {
+		logger.Fatal("NHTSA worker init failed", zap.Error(err))
+	}
+	defer stopNHTSA()
 	router := s.Router()
 	httpServer := &http.Server{Addr: ":" + cfg.Port, Handler: router}
 

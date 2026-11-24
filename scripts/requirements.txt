@@ -6,3 +6,38 @@ camoufox==0.4.11
 playwright==1.60.0
 browserforge==1.2.4
 apify_fingerprint_datapoints==0.13.0
+
+# Runtime dependencies pinned for CPython 3.12 on Linux x86-64.
+# curl_cffi and rich's dependency chain
+cffi==2.0.0
+pycparser==2.23
+certifi==2026.10.23
+rich==14.2.0
+markdown-it-py==4.0.0
+mdurl==0.1.2
+Pygments==2.20.0
+
+# Playwright and pyee's shared dependency
+greenlet==3.5.6
+pyee==13.0.0
+typing-extensions==4.15.0
+
+# Camoufox and BrowserForge
+click==8.2.1
+language-tags==1.2.0
+lxml==6.1.2
+numpy==2.2.6
+orjson==3.11.9
+platformdirs==4.4.0
+PySocks==1.7.1
+PyYAML==6.0.3
+requests==2.34.2
+screeninfo==0.8.1
+tqdm==4.67.1
+ua-parser==1.0.2
+ua-parser-builtins==202610
+
+# Requests also uses the shared certifi pin above
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.8.0

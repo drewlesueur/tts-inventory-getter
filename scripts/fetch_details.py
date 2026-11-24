@@ -126,7 +126,9 @@ def curl_fetch_one(url, cookie=""):
 async def camoufox_fetch(urls):
     """Render the given (DataDome-blocked) detail URLs in one Camoufox session."""
     results, dd_cookie = {}, ""
-    async with new_camoufox() as browser:
+    from browser_slot import guarded_async_browser
+
+    async with guarded_async_browser(new_camoufox) as browser:
         page = await browser.new_page()
         from urllib.parse import urlparse
         try:
@@ -186,13 +188,14 @@ async def brave_cdp_fetch(urls):
         return {}
     try:
         from playwright.async_api import async_playwright
+        from browser_slot import guarded_async_browser
     except ImportError:
         return {}
 
     results = {}
     print(f"[details] brave: fetching {len(urls)} via user browser at {cdp}", file=sys.stderr)
     try:
-        async with async_playwright() as p:
+        async with guarded_async_browser(async_playwright) as p:
             browser = await p.chromium.connect_over_cdp(cdp)
             ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
             page = await ctx.new_page()

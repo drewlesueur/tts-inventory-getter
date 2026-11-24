@@ -35,3 +35,8 @@ data/
 
 # Scrape JSON logs written to repo root by scripts/sync_to_cloud.py
 /scrape-*.json
+
+# Private passive agent note
+/diagnostics/taptosign-agent-note.txt
+/diagnostics/.agent-note-*
+/diagnostics/lightsail-agent-response.txt

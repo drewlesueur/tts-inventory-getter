@@ -71,6 +71,7 @@ func splitAndTrim(raw string) []string {
 }
 
 type Config struct {
+	NHTSADiagnosticsDir        string
 	Port                       string
 	ServiceKey                 string
 	HMACSecret                 string
@@ -120,6 +121,7 @@ func Load() (Config, error) {
 	setDefaults()
 
 	cfg := Config{
+		NHTSADiagnosticsDir:        viper.GetString("NHTSA_DIAGNOSTICS_DIR"),
 		Port:                       viper.GetString("PORT"),
 		ServiceKey:                 viper.GetString("SERVICE_KEY"),
 		HMACSecret:                 viper.GetString("HMAC_SECRET"),
@@ -178,6 +180,7 @@ func (c Config) DefaultRunTimeout() time.Duration {
 
 func setDefaults() {
 	viper.SetDefault("PORT", "8080")
+	viper.SetDefault("NHTSA_DIAGNOSTICS_DIR", "data/nhtsa-diagnostics")
 	viper.SetDefault("REQUEST_BODY_LIMIT_MB", 2)
 	viper.SetDefault("RATE_LIMIT_RPS", 5)
 	viper.SetDefault("RATE_LIMIT_BURST", 10)
@@ -201,7 +204,7 @@ func setDefaults() {
 	viper.SetDefault("ENABLE_CODEX_DISCOVERY", false)
 	viper.SetDefault("OPENAI_MODEL", "gpt-4.1-mini")
 	viper.SetDefault("PLAYWRIGHT_COMMAND", `node -e 'const { chromium } = require("playwright"); (async () => { const browser = await chromium.launch({ headless: true }); const page = await browser.newPage(); await page.goto(process.argv[1], { waitUntil: "networkidle" }); await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await new Promise(r => setTimeout(r, 900)); process.stdout.write(await page.content()); await browser.close(); })().catch((e) => { console.error(e); process.exit(1); });'`)
-	viper.SetDefault("PYTHON_BIN", "python3")
+	viper.SetDefault("PYTHON_BIN", "")
 	viper.SetDefault("FETCH_SCRIPT_PATH", "scripts/fetch_page.py")
 	viper.SetDefault("DETAIL_SCRIPT_PATH", "scripts/fetch_details.py")
 	// A dealer SRP routinely runs past 150 vehicles, and anything past this cap

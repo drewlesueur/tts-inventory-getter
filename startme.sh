@@ -9,15 +9,6 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-VENV_DIR="$ROOT_DIR/.venv"
-# Server startup must not install Python, pip packages, or browser binaries.
-# Use a pre-provisioned project environment when available; otherwise the Go
-# scraper starts normally and its configured HTTP/browser fallbacks remain active.
-if [ -x "$VENV_DIR/bin/python" ] &&
-  "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)' >/dev/null 2>&1; then
-  export PYTHON_BIN="$VENV_DIR/bin/python"
-fi
-
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     cp .env.example .env

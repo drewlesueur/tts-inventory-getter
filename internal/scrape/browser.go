@@ -18,7 +18,8 @@ import (
 )
 
 type ChromeBrowser struct {
-	allocCtx context.Context
+	ctx  context.Context
+	opts []chromedp.ExecAllocatorOption
 }
 
 func chromeBrowserErrorf(format string, args ...any) {
@@ -31,7 +32,7 @@ func chromeBrowserErrorf(format string, args ...any) {
 }
 
 func NewChromeBrowser(headless bool) (*ChromeBrowser, context.CancelFunc) {
-	opts := chromedp.DefaultExecAllocatorOptions[:]
+	opts := append([]chromedp.ExecAllocatorOption(nil), chromedp.DefaultExecAllocatorOptions[:]...)
 	if p := detectChromeExecPath(); p != "" {
 		opts = append(opts, chromedp.ExecPath(p))
 	}
@@ -45,9 +46,8 @@ func NewChromeBrowser(headless bool) (*ChromeBrowser, context.CancelFunc) {
 		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
 		chromedp.WindowSize(1366, 768),
 	)
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
-	cancel := func() { cancelAlloc() }
-	return &ChromeBrowser{allocCtx: allocCtx}, cancel
+	lifetime, cancel := context.WithCancel(context.Background())
+	return &ChromeBrowser{ctx: lifetime, opts: opts}, cancel
 }
 
 func detectChromeExecPath() string {
@@ -81,8 +81,28 @@ func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.S
     started:=time.Now()
     var finalURL string
     defer func(){recordPageDiagnostic(ctx,"fetch","chrome",urlStr,finalURL,resultHTML,0,started,resultErr)}()
-	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx, chromedp.WithErrorf(chromeBrowserErrorf))
-	defer cancelTab()
+	release, err := AcquireBrowserSlot(ctx)
+	if err != nil {
+		return "", err
+	}
+	var browserCmd *exec.Cmd
+	opts := append([]chromedp.ExecAllocatorOption(nil), b.opts...)
+	opts = append(opts, chromedp.ModifyCmdFunc(func(cmd *exec.Cmd) {
+		manageChildProcess(cmd)
+		browserCmd = cmd
+	}))
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(b.ctx, opts...)
+	tabCtx, cancelTab := chromedp.NewContext(allocCtx, chromedp.WithErrorf(chromeBrowserErrorf))
+	defer func() {
+		cancelTab()
+		cancelAlloc()
+		clean := cleanChildProcessGroup(browserCmd)
+		release(clean)
+		if !clean && resultErr == nil {
+			resultHTML = ""
+			resultErr = fmt.Errorf("could not verify Chrome process group cleanup")
+		}
+	}()
     chromedp.ListenTarget(tabCtx,func(event interface{}) {
         if response,ok:=event.(*network.EventResponseReceived);ok && response.Type==network.ResourceTypeDocument {
             RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"document_response",Method:"chrome",URL:response.Response.URL,HTTPStatus:int(response.Response.Status),Message:"Browser document response (main frame or subframe)"})
@@ -93,6 +113,8 @@ func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.S
     })
 	timeoutCtx, cancel := context.WithTimeout(tabCtx, 45*time.Second)
 	defer cancel()
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
 
 	// Phase 1: navigate and read final URL immediately to fail fast on bad redirects.
 	if err := chromedp.Run(timeoutCtx,
@@ -116,7 +138,7 @@ func (b *ChromeBrowser) Render(ctx context.Context, urlStr string, site config.S
 		if len(site.ListPage.WaitSelectors) == 0 {
 			return
 		}
-		waitCtx, waitCancel := context.WithTimeout(tabCtx, 4*time.Second)
+		waitCtx, waitCancel := context.WithTimeout(timeoutCtx, 4*time.Second)
 		defer waitCancel()
 		if waitErr:=chromedp.Run(waitCtx, chromedp.WaitVisible(site.ListPage.WaitSelectors[0], chromedp.ByQuery));waitErr!=nil {
             RecordDiagnostic(ctx,model.DiagnosticEvent{Stage:"selector_wait",Method:"chrome",URL:urlStr,Message:site.ListPage.WaitSelectors[0]+": "+waitErr.Error()})

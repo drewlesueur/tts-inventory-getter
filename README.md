@@ -24,6 +24,9 @@ Production-oriented scraper service for dealership inventory extraction.
 Saved site YAML templates do not expire. Discovery runs only when no template exists for the requested URL; an existing template remains active until it is explicitly updated or deleted.
 
 ## API
+
+NHTSA VIN lookups and PDF reports use the same authenticated service: see [NHTSA API, operation, retention, and verification](NHTSA.md).
+
 ### `POST /v1/scrape/once`
 Successful results are cached by dealership and normalized source URL for 24 hours. Requests during that window return the completed cached result without starting another live scrape. The client-provided `idempotencyKey` does not change the cache identity.
 
@@ -203,6 +206,47 @@ go mod tidy
 go test ./...
 go run ./cmd/server
 ```
+
+### Python runtime and browser concurrency
+
+Provision the pinned Linux x86-64 Python 3.12 runtime before starting the
+service. Use a new absolute path outside the checkout or under ignored `data/`.
+
+```bash
+./scripts/prepare-python-runtime.sh /path/to/new-runtime
+```
+
+The script installs only the pinned wheels and checks requirements and imports.
+Browser assets are provisioned separately. The service does not install Python
+packages or browser assets at startup. Set `PYTHON_BIN` to the verified absolute
+`bin/python` path. Interpreter selection prefers an executable override, then
+a project `.venv` with `pyvenv.cfg`, then system Python. Check the two Python
+fetcher startup log entries for the selected interpreter.
+
+Inventory and NHTSA browser launches and CDP operations share a single slot
+per Unix account and
+shared `/tmp` on the host. Go and Python acquire it at the browser boundary.
+HTTP-only work is outside the slot. A waiter gives up after 10 seconds or when
+its job is cancelled. `SCRAPE_CONCURRENCY` still controls inline detail workers
+per job. It does not increase browser capacity. Independent users, isolated
+`/tmp` mounts, and unmanaged browsers do not share this slot.
+
+The lock file is `/tmp/tts-scraper-browser-<uid>/browser.lock`. An interrupted
+holder can leave a PID marker that blocks further browser work. To recover,
+quiesce all participating launchers, verify that no related browser or driver
+process remains, then truncate the existing file as the scraper account while
+holding its exclusive lock. Keep the inode in place. Local process-group
+cleanup does not provide cgroup containment for arbitrary detached commands.
+
+For a rollout, stage the binary and matching Python scripts together, retain
+the prior binary, scripts, interpreter and configuration, and validate the
+candidate against isolated fixtures first. Confirm sandbox-enabled local
+checks before using Playwright or direct Chrome on the host. With approval,
+replace the running release and set the candidate interpreter override, then
+verify the startup logs and one bounded scrape. Roll back by restoring the
+previous binary and scripts as a set and restoring the prior interpreter
+override before restarting. Keep the original venv and browser assets until
+rollback is no longer needed.
 
 ### Generic Any-Site Scrape (Rod + Goquery + OpenAI Structured Output)
 This repo now includes `cmd/scrapeany`, a generic command to scrape almost any website with:
