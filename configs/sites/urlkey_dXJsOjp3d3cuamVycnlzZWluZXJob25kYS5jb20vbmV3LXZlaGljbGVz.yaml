@@ -1,0 +1,13 @@
+# Install in the inventory getter's SITE_CONFIGS_DIR (default: configs/sites).
+# Keep this filename so both manual and scheduled pulls resolve the exact source URL.
+# Cars.com identifies Jerry Seiner Honda of San Juan Capistrano as dealer 6069776.
+name: url::www.jerryseinerhonda.com/new-vehicles
+baseUrl: https://www.jerryseinerhonda.com/new-vehicles/
+listPage:
+    pagination:
+        maxPages: 20
+carsCommerce:
+    ccid: "6069776"
+    # Public Cars Commerce website search key shared by the existing site adapters.
+    searchKey: "OQa8l7SzMctJyr5bhSG9jYvlGnZUQfgl"
+    vehicleType: New
